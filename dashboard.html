@@ -3,27 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ambulatory Patient Monitor - Firebase</title>
+    <title>Ambulatory Patient Monitor - Hospital Logistics</title>
 
     <script src="https://cdn.tailwindcss.com"></script>
-
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js"></script>
 
     <style>
         /* Custom styles for light-mode, professional monitoring look */
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #f8f8f8; /* Light background */
-            color: #1f2937; /* Dark text */
+            background-color: #f8f8f8;
+            color: #1f2937;
             overflow: hidden;
             padding: 0.75rem !important;
         }
         .metric-card {
-            background-color: #ffffff; /* White card background */
-            border: 1px solid #e5e7eb; /* Light border */
+            background-color: #ffffff;
+            border: 1px solid #e5e7eb;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
             border-radius: 0.5rem;
-            padding: 0.75rem; /* REDUCED CARD PADDING */
+            padding: 0.75rem;
             display: flex;
             flex-direction: column;
             justify-content: center;
@@ -31,13 +30,13 @@
             height: 100%;
         }
         .metric-label {
-            font-size: 0.8rem; /* REDUCED FONT SIZE */
-            color: #6b7280; /* Gray label */
-            margin-bottom: 0.1rem; /* Reduced bottom margin */
+            font-size: 0.8rem;
+            color: #6b7280;
+            margin-bottom: 0.1rem;
             text-transform: uppercase;
         }
         .metric-value {
-            font-size: 1.8rem; /* REDUCED FONT SIZE */
+            font-size: 1.8rem;
             font-weight: bold;
             line-height: 1;
         }
@@ -92,7 +91,7 @@
     <header class="flex justify-between items-center mb-3 text-[#1f2937] border-b border-gray-300 pb-2">
 
         <div class="flex items-center gap-4">
-            <h1 class="text-xl font-bold">Ambulatory Monitor (Firebase)</h1>
+            <h1 class="text-xl font-bold">Ambulatory Monitor (Hospital View)</h1>
         </div>
 
         <div class="flex items-center gap-4">
@@ -106,6 +105,39 @@
             </div>
         </div>
     </header>
+
+    <div class="logistics-panel flex flex-col gap-3 mb-4 p-3 bg-white border border-gray-300 rounded-lg shadow">
+        <h2 class="text-base font-bold text-gray-700">Patient Assignment & Logistics:</h2>
+
+        <div class="grid grid-cols-5 gap-4 items-center">
+
+            <div class="flex flex-col">
+                <span class="text-xs text-gray-500 mb-1">Assigned Doctor:</span>
+                <input type="text" id="doc-input" class="border rounded px-2 py-1 text-sm focus:border-blue-500" placeholder="Dr. Smith, Cardiology">
+            </div>
+
+            <div class="flex flex-col">
+                <span class="text-xs text-gray-500 mb-1">Assigned Nurse:</span>
+                <input type="text" id="nurse-input" class="border rounded px-2 py-1 text-sm focus:border-blue-500" placeholder="Nurse Ann, Trauma">
+            </div>
+
+            <div class="flex flex-col">
+                <span class="text-xs text-gray-500 mb-1">Assigned Paramedic:</span>
+                <input type="text" id="paramedic-input" class="border rounded px-2 py-1 text-sm focus:border-blue-500" placeholder="EMT John">
+            </div>
+
+            <div class="flex flex-col">
+                <span class="text-xs text-gray-500 mb-1">Target Bed/Room:</span>
+                <input type="text" id="bed-input" class="border rounded px-2 py-1 text-sm focus:border-blue-500" placeholder="ER Bay 4">
+            </div>
+
+            <button id="save-logistics-btn" class="self-end bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 transition-colors h-10">
+                Update Logistics
+            </button>
+        </div>
+        <p class="text-xs text-gray-500 text-right" id="logistics-updated-time">Last updated: --</p>
+    </div>
+
 
     <div class="flex flex-1 gap-3 overflow-hidden">
 
@@ -157,9 +189,7 @@
                 </div>
             </div>
 
-            <div class="flex flex-col gap-3 pt-2">
-
-            </div>
+            <div class="flex flex-col gap-3 pt-2"></div>
         </div>
     </div>
 
@@ -167,17 +197,12 @@
 
 
     <script>
-        // CRITICAL: REPLACE THIS PLACEHOLDER with your actual Firebase REST API URL
-        // Format: https://[YOUR-PROJECT-ID]-default-rtdb.firebaseio.com/ambulance_vitals.json
-        // In dashboard.html
-            // In dashboard.html:
-const API_URL = 'https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1.firebasedatabase.app/ambulance_vitals.json';
+        // --- FIREBASE API CONFIGURATION ---
+        const VITAL_API_URL = 'https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1.firebasedatabase.app/ambulance_vitals.json';
+        const LOGISTICS_NODE = 'patient_logistics';
+        const LOGISTICS_API_URL = 'https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1.firebasedatabase.app/' + LOGISTICS_NODE + '.json';
 
         const refreshRate = 500; // Update every 500ms (0.5 seconds)
-
-        // State Management
-        let isMonitoring = false;
-        let updateInterval;
 
         // Element references
         const elements = {
@@ -188,6 +213,14 @@ const API_URL = 'https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1
             temp: document.getElementById('temp-value'),
             connectionIndicator: document.getElementById('connection-indicator'),
             statusText: document.getElementById('status-text'),
+
+            // New Logistics Elements
+            docInput: document.getElementById('doc-input'),
+            nurseInput: document.getElementById('nurse-input'),
+            bedInput: document.getElementById('bed-input'),
+            paramedicInput: document.getElementById('paramedic-input'),
+            saveBtn: document.getElementById('save-logistics-btn'),
+            updateTime: document.getElementById('logistics-updated-time')
         };
 
         // Chart.js instances
@@ -195,9 +228,9 @@ const API_URL = 'https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1
 
         // Configuration object for charts
         const chartColors = {
-            ecg: '#10b981', // Emerald Green
-            ppg: '#3b82f6', // Blue
-            rr: '#f59e0b'   // Amber
+            ecg: '#10b981',
+            ppg: '#3b82f6',
+            rr: '#f59e0b'
         };
 
         // Initialize Charts
@@ -264,6 +297,16 @@ const API_URL = 'https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1
             return value.toFixed(decimals);
         };
 
+        // Helper function to format timestamp
+        const formatTime = (isoString) => {
+            if (!isoString) return '--';
+            try {
+                return new Date(isoString).toLocaleTimeString();
+            } catch {
+                return '--';
+            }
+        }
+
         // Helper function to update the status indicator based on data status
         function updateStatusDisplay(status) {
             elements.connectionIndicator.classList.remove('connected', 'buffering');
@@ -276,17 +319,70 @@ const API_URL = 'https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1
                 elements.connectionIndicator.classList.add('buffering');
                 elements.statusText.textContent = 'Buffering...';
             } else {
-                // Default to disconnected/error state
                 elements.connectionIndicator.classList.remove('connected');
                 elements.statusText.textContent = 'Error/Offline';
             }
         }
 
+        // --- LOGISTICS READ/WRITE FUNCTIONS ---
 
+        async function fetchLogistics() {
+            try {
+                const response = await fetch(LOGISTICS_API_URL);
+                const logistics = await response.json();
+
+                if (logistics) {
+                    // Populate inputs with current logistics data
+                    elements.docInput.value = logistics.doctor || '';
+                    elements.nurseInput.value = logistics.nurse || '';
+                    elements.bedInput.value = logistics.bed || '';
+                    elements.paramedicInput.value = logistics.paramedic || '';
+
+                    const time = formatTime(logistics.updated_at);
+                    elements.updateTime.textContent = `Last updated: ${time}`;
+                }
+            } catch (error) {
+                console.error("Failed to fetch logistics data:", error);
+            }
+        }
+
+        async function saveLogistics() {
+            elements.saveBtn.disabled = true;
+            elements.saveBtn.textContent = 'Saving...';
+
+            const logisticsData = {
+                doctor: elements.docInput.value || 'N/A',
+                nurse: elements.nurseInput.value || 'N/A',
+                bed: elements.bedInput.value || 'N/A',
+                paramedic: elements.paramedicInput.value || 'N/A',
+                updated_at: new Date().toISOString()
+            };
+
+            try {
+                const response = await fetch(LOGISTICS_API_URL, {
+                    method: 'PUT', // PUT overwrites the entire node
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(logisticsData)
+                });
+
+                if (response.ok) {
+                    console.log("Logistics successfully updated.");
+                } else {
+                    console.error("Failed to save logistics:", response.status);
+                }
+            } catch (error) {
+                console.error("Network error saving logistics:", error);
+            } finally {
+                elements.saveBtn.textContent = 'Update Logistics';
+                elements.saveBtn.disabled = false;
+                fetchLogistics(); // Refresh local display time immediately
+            }
+        }
+
+        // --- VITAL SIGNS FETCH FUNCTION ---
         async function fetchAndUpdateData() {
             try {
-                // Firebase uses a simple GET request
-                const response = await fetch(API_URL, {
+                const response = await fetch(VITAL_API_URL, {
                     headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
                 });
 
@@ -297,7 +393,6 @@ const API_URL = 'https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1
                 const data = await response.json();
 
                 if (!data) {
-                    // This happens if the Firebase node is empty
                     throw new Error('No data received from sender node.');
                 }
 
@@ -347,9 +442,15 @@ const API_URL = 'https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1
 
         // --- AUTORUN LOGIC ---
         document.addEventListener('DOMContentLoaded', () => {
-            isMonitoring = true; // Set monitoring state to ON permanently
+            // Attach event listener for the save button
+            elements.saveBtn.addEventListener('click', saveLogistics);
+
+            // Start reading logistics immediately to populate fields
+            fetchLogistics();
+
+            // Start reading vitals continuously
             updateStatusDisplay('INITIALIZING');
-            setTimeout(fetchAndUpdateData, 500); // Start the continuous fetch loop
+            setTimeout(fetchAndUpdateData, 500);
         });
     </script>
 </body>
