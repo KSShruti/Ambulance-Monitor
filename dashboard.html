@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ambulatory Patient Monitor - Firebase</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js"></script>
+
+    <style>
+        /* Custom styles for light-mode, professional monitoring look */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8f8f8; /* Light background */
+            color: #1f2937; /* Dark text */
+            overflow: hidden;
+            padding: 0.75rem !important;
+        }
+        .metric-card {
+            background-color: #ffffff; /* White card background */
+            border: 1px solid #e5e7eb; /* Light border */
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            border-radius: 0.5rem;
+            padding: 0.75rem; /* REDUCED CARD PADDING */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+        }
+        .metric-label {
+            font-size: 0.8rem; /* REDUCED FONT SIZE */
+            color: #6b7280; /* Gray label */
+            margin-bottom: 0.1rem; /* Reduced bottom margin */
+            text-transform: uppercase;
+        }
+        .metric-value {
+            font-size: 1.8rem; /* REDUCED FONT SIZE */
+            font-weight: bold;
+            line-height: 1;
+        }
+        .chart-container {
+            background-color: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.5rem;
+            overflow: hidden;
+            min-height: 0;
+        }
+        canvas {
+            background-color: #ffffff;
+        }
+
+        /* VITAL VALUE COLORS */
+        .value-hr { color: #10b981; }
+        .value-spo2 { color: #3b82f6; }
+        .value-rr { color: #f59e0b; }
+        .value-temp { color: #ef4444; }
+        .value-hrv { color: #8b5cf6; }
+
+        /* CHART BORDER COLORS */
+        .chart-ecg { border-left: 5px solid #10b981; }
+        .chart-ppg { border-left: 5px solid #3b82f6; }
+        .chart-rr { border-left: 5px solid #f59e0b; }
+
+        .status-indicator {
+            width: 1rem;
+            height: 1rem;
+            border-radius: 50%;
+            background-color: #ef4444;
+            transition: background-color 0.3s ease;
+        }
+        .status-indicator.connected {
+            background-color: #10b981;
+        }
+        .status-indicator.buffering {
+            background-color: #f59e0b; /* Amber */
+        }
+
+        .vital-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            grid-template-rows: repeat(5, minmax(0, 1fr));
+            gap: 0.4rem;
+            height: 100%;
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen p-4">
+
+    <header class="flex justify-between items-center mb-3 text-[#1f2937] border-b border-gray-300 pb-2">
+
+        <div class="flex items-center gap-4">
+            <h1 class="text-xl font-bold">Ambulatory Monitor (Firebase)</h1>
+        </div>
+
+        <div class="flex items-center gap-4">
+             <div class="text-base font-semibold text-right">
+                <p><span id="patient-id">Patient ID: 12345</span></p>
+                <p class="text-sm text-gray-500"><span id="patient-details">Details: John Doe, M/55</span></p>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-sm text-gray-500" id="status-text">Data Stream:</span>
+                <div id="connection-indicator" class="status-indicator"></div>
+            </div>
+        </div>
+    </header>
+
+    <div class="flex flex-1 gap-3 overflow-hidden">
+
+        <div class="flex flex-col w-3/4 gap-3">
+
+            <div class="chart-container flex-1 chart-ecg flex flex-col justify-center">
+                <h3 class="text-sm font-semibold text-gray-600 px-4 pt-1">ECG (Electrocardiogram)</h3>
+                <canvas id="ecgChart"></canvas>
+            </div>
+
+            <div class="chart-container flex-1 chart-ppg flex flex-col justify-center">
+                <h3 class="text-sm font-semibold text-gray-600 px-4 pt-1">PPG (Photoplethysmogram)</h3>
+                <canvas id="ppgChart"></canvas>
+            </div>
+
+            <div class="chart-container flex-1 chart-rr flex flex-col justify-center">
+                <h3 class="text-sm font-semibold text-gray-600 px-4 pt-1">RR (Respiration Rate - EDR)</h3>
+                <canvas id="rrChart"></canvas>
+            </div>
+        </div>
+
+        <div class="flex flex-col w-1/4 gap-3">
+
+            <div class="vital-grid flex-1">
+                <div class="metric-card">
+                    <p class="metric-label">HR</p>
+                    <p class="metric-value value-hr" id="hr-value">--</p>
+                    <p class="text-gray-500 text-xs mt-1">BPM</p>
+                </div>
+                <div class="metric-card">
+                    <p class="metric-label">SpO₂</p>
+                    <p class="metric-value value-spo2" id="spo2-value">--</p>
+                    <p class="text-gray-500 text-xs mt-1">%</p>
+                </div>
+                <div class="metric-card">
+                    <p class="metric-label">RR</p>
+                    <p class="metric-value value-rr" id="rr-value">--</p>
+                    <p class="text-gray-500 text-xs mt-1">BPM</p>
+                </div>
+                 <div class="metric-card">
+                    <p class="metric-label">Temp</p>
+                    <p class="metric-value value-temp" id="temp-value">--</p>
+                    <p class="text-gray-500 text-xs mt-1">°C</p>
+                </div>
+                <div class="metric-card">
+                    <p class="metric-label">HRV (RMSSD)</p>
+                    <p class="metric-value value-hrv" id="hrv-value">--</p>
+                    <p class="text-gray-500 text-xs mt-1">ms</p>
+                </div>
+            </div>
+
+            <div class="flex flex-col gap-3 pt-2">
+
+            </div>
+        </div>
+    </div>
+
+    <footer class="py-2 mt-2"></footer>
+
+
+    <script>
+        // CRITICAL: REPLACE THIS PLACEHOLDER with your actual Firebase REST API URL
+        // Format: https://[YOUR-PROJECT-ID]-default-rtdb.firebaseio.com/ambulance_vitals.json
+        // In dashboard.html
+            // In dashboard.html:
+const API_URL = 'https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1.firebasedatabase.app/ambulance_vitals.json';
+
+        const refreshRate = 500; // Update every 500ms (0.5 seconds)
+
+        // State Management
+        let isMonitoring = false;
+        let updateInterval;
+
+        // Element references
+        const elements = {
+            hr: document.getElementById('hr-value'),
+            hrv: document.getElementById('hrv-value'),
+            rr: document.getElementById('rr-value'),
+            spo2: document.getElementById('spo2-value'),
+            temp: document.getElementById('temp-value'),
+            connectionIndicator: document.getElementById('connection-indicator'),
+            statusText: document.getElementById('status-text'),
+        };
+
+        // Chart.js instances
+        let ecgChart, ppgChart, rrChart;
+
+        // Configuration object for charts
+        const chartColors = {
+            ecg: '#10b981', // Emerald Green
+            ppg: '#3b82f6', // Blue
+            rr: '#f59e0b'   // Amber
+        };
+
+        // Initialize Charts
+        function initializeCharts(waveformTimes) {
+            const chartOptions = (color) => ({
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 0 },
+                parsing: false,
+                scales: {
+                    x: {
+                        type: 'linear',
+                        min: 0,
+                        max: waveformTimes.length > 0 ? waveformTimes[waveformTimes.length - 1] : 5,
+                        grid: { display: false },
+                        ticks: { display: false },
+                        border: { display: false }
+                    },
+                    y: {
+                        grid: { color: '#e5e7eb', lineWidth: 0.5 },
+                        ticks: { display: false },
+                        border: { display: false }
+                    }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { enabled: false },
+                    title: { display: false }
+                },
+                elements: {
+                    point: { radius: 0 }
+                }
+            });
+
+            const createChart = (ctxId, color) => {
+                const ctx = document.getElementById(ctxId).getContext('2d');
+                return new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: waveformTimes,
+                        datasets: [{
+                            data: [],
+                            borderColor: color,
+                            borderWidth: 2,
+                            tension: 0.1,
+                            fill: false
+                        }]
+                    },
+                    options: chartOptions(color)
+                });
+            };
+
+            // Initialize all charts
+            ecgChart = createChart('ecgChart', chartColors.ecg);
+            ppgChart = createChart('ppgChart', chartColors.ppg);
+            rrChart = createChart('rrChart', chartColors.rr);
+        }
+
+        // Helper function to safely format a value, showing '--' if zero or invalid
+        const formatValue = (value, decimals, defaultText = '--') => {
+            if (value == null || value === 0.0 || isNaN(value)) {
+                return defaultText;
+            }
+            return value.toFixed(decimals);
+        };
+
+        // Helper function to update the status indicator based on data status
+        function updateStatusDisplay(status) {
+            elements.connectionIndicator.classList.remove('connected', 'buffering');
+            elements.statusText.textContent = 'Data Stream: ';
+
+            if (status === 'MONITORING') {
+                elements.connectionIndicator.classList.add('connected');
+                elements.statusText.textContent = 'Monitoring';
+            } else if (status === 'BUFFERING') {
+                elements.connectionIndicator.classList.add('buffering');
+                elements.statusText.textContent = 'Buffering...';
+            } else {
+                // Default to disconnected/error state
+                elements.connectionIndicator.classList.remove('connected');
+                elements.statusText.textContent = 'Error/Offline';
+            }
+        }
+
+
+        async function fetchAndUpdateData() {
+            try {
+                // Firebase uses a simple GET request
+                const response = await fetch(API_URL, {
+                    headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Firebase returned non-OK status: ${response.status}`);
+                }
+
+                const data = await response.json();
+
+                if (!data) {
+                    // This happens if the Firebase node is empty
+                    throw new Error('No data received from sender node.');
+                }
+
+                // 1. Initialize charts if necessary
+                if (!ecgChart && data.waveform_times && data.waveform_times.length > 0) {
+                    initializeCharts(data.waveform_times);
+                }
+
+                // 2. VITAL SIGNS ASSIGNMENT
+                elements.hr.textContent = formatValue(data.hr, 1);
+                elements.hrv.textContent = formatValue(data.hrv, 2);
+                elements.rr.textContent = formatValue(data.rr, 2);
+                elements.spo2.textContent = formatValue(data.spo2, 1);
+                elements.temp.textContent = formatValue(data.temp, 2);
+
+                // 3. CHART UPDATE LOGIC
+                if (ecgChart && data.ecg_waveform) {
+                    const ecgData = data.ecg_waveform.map((val, i) => ({ x: data.waveform_times[i], y: val }));
+                    ecgChart.data.datasets[0].data = ecgData;
+                    ecgChart.update();
+                }
+                if (ppgChart && data.ppg_waveform) {
+                    const ppgData = data.ppg_waveform.map((val, i) => ({ x: data.waveform_times[i], y: val }));
+                    ppgChart.data.datasets[0].data = ppgData;
+                    ppgChart.update();
+                }
+                if (rrChart && data.rr_waveform) {
+                    const rrData = data.rr_waveform.map((val, i) => ({ x: data.waveform_times[i], y: val }));
+                    rrChart.data.datasets[0].data = rrData;
+                    rrChart.update();
+                }
+
+                // 4. Update Connection Status based on data's internal status
+                updateStatusDisplay(data.status);
+
+            } catch (error) {
+                console.error('Data stream interrupted or assignment failed:', error);
+                // Clear values and set status to error/offline
+                elements.hr.textContent = elements.hrv.textContent = elements.rr.textContent = elements.spo2.textContent = elements.temp.textContent = '--';
+                updateStatusDisplay('ERROR');
+
+            } finally {
+                // Ensure the next fetch happens regardless of success/failure
+                setTimeout(fetchAndUpdateData, refreshRate);
+            }
+        }
+
+        // --- AUTORUN LOGIC ---
+        document.addEventListener('DOMContentLoaded', () => {
+            isMonitoring = true; // Set monitoring state to ON permanently
+            updateStatusDisplay('INITIALIZING');
+            setTimeout(fetchAndUpdateData, 500); // Start the continuous fetch loop
+        });
+    </script>
+</body>
+</html>
