@@ -95,9 +95,18 @@
         </div>
 
         <div class="flex items-center gap-4">
-             <div class="text-base font-semibold text-right">
-                <p><span id="patient-id">Patient ID: 12345</span></p>
-                <p class="text-sm text-gray-500"><span id="patient-details">Details: John Doe, M/55</span></p>
+             <div class="flex flex-col text-sm font-semibold text-right p-1 rounded">
+                <p class="text-base text-gray-700">Patient ID: <span id="patient-id-value" class="font-bold text-gray-900">--</span></p>
+
+                <div class="flex gap-2 justify-end text-sm mt-1">
+                    <input type="text" id="patient-name-input" class="border rounded px-1 w-24 text-sm" placeholder="Name">
+                    <input type="number" id="patient-age-input" class="border rounded px-1 w-12 text-sm" placeholder="Age">
+                    <select id="patient-gender-input" class="border rounded px-1 text-sm">
+                        <option value="M">M</option>
+                        <option value="F">F</option>
+                        <option value="O">O</option>
+                    </select>
+                </div>
             </div>
             <div class="flex items-center gap-2">
                 <span class="text-sm text-gray-500" id="status-text">Data Stream:</span>
@@ -214,7 +223,13 @@
             connectionIndicator: document.getElementById('connection-indicator'),
             statusText: document.getElementById('status-text'),
 
-            // New Logistics Elements
+            // Patient Info Elements
+            patientIdValue: document.getElementById('patient-id-value'),
+            nameInput: document.getElementById('patient-name-input'),
+            ageInput: document.getElementById('patient-age-input'),
+            genderInput: document.getElementById('patient-gender-input'),
+
+            // Logistics Elements
             docInput: document.getElementById('doc-input'),
             nurseInput: document.getElementById('nurse-input'),
             bedInput: document.getElementById('bed-input'),
@@ -223,17 +238,16 @@
             updateTime: document.getElementById('logistics-updated-time')
         };
 
-        // Chart.js instances
+        // Helper function to generate a 6-digit Patient ID
+        function generatePatientId() {
+            return Math.floor(100000 + Math.random() * 900000).toString();
+        }
+
+        // Chart.js instances (unchanged)
         let ecgChart, ppgChart, rrChart;
+        const chartColors = { ecg: '#10b981', ppg: '#3b82f6', rr: '#f59e0b' };
 
-        // Configuration object for charts
-        const chartColors = {
-            ecg: '#10b981',
-            ppg: '#3b82f6',
-            rr: '#f59e0b'
-        };
-
-        // Initialize Charts
+        // Initialize Charts (unchanged logic)
         function initializeCharts(waveformTimes) {
             const chartOptions = (color) => ({
                 responsive: true,
@@ -260,9 +274,7 @@
                     tooltip: { enabled: false },
                     title: { display: false }
                 },
-                elements: {
-                    point: { radius: 0 }
-                }
+                elements: { point: { radius: 0 } }
             });
 
             const createChart = (ctxId, color) => {
@@ -283,13 +295,11 @@
                 });
             };
 
-            // Initialize all charts
             ecgChart = createChart('ecgChart', chartColors.ecg);
             ppgChart = createChart('ppgChart', chartColors.ppg);
             rrChart = createChart('rrChart', chartColors.rr);
         }
 
-        // Helper function to safely format a value, showing '--' if zero or invalid
         const formatValue = (value, decimals, defaultText = '--') => {
             if (value == null || value === 0.0 || isNaN(value)) {
                 return defaultText;
@@ -297,17 +307,15 @@
             return value.toFixed(decimals);
         };
 
-        // Helper function to format timestamp
         const formatTime = (isoString) => {
             if (!isoString) return '--';
             try {
-                return new Date(isoString).toLocaleTimeString();
+                return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
             } catch {
                 return '--';
             }
         }
 
-        // Helper function to update the status indicator based on data status
         function updateStatusDisplay(status) {
             elements.connectionIndicator.classList.remove('connected', 'buffering');
             elements.statusText.textContent = 'Data Stream: ';
@@ -324,7 +332,7 @@
             }
         }
 
-        // --- LOGISTICS READ/WRITE FUNCTIONS ---
+        // --- LOGISTICS READ/WRITE FUNCTIONS (MODIFIED) ---
 
         async function fetchLogistics() {
             try {
@@ -332,14 +340,24 @@
                 const logistics = await response.json();
 
                 if (logistics) {
-                    // Populate inputs with current logistics data
+                    // 1. Populate Patient ID and Info
+                    elements.patientIdValue.textContent = logistics.patient_id || generatePatientId();
+                    elements.nameInput.value = logistics.patient_name || '';
+                    elements.ageInput.value = logistics.patient_age || '';
+                    elements.genderInput.value = logistics.patient_gender || 'M';
+
+                    // 2. Populate Logistics
                     elements.docInput.value = logistics.doctor || '';
                     elements.nurseInput.value = logistics.nurse || '';
                     elements.bedInput.value = logistics.bed || '';
                     elements.paramedicInput.value = logistics.paramedic || '';
 
+                    // 3. Update Time
                     const time = formatTime(logistics.updated_at);
                     elements.updateTime.textContent = `Last updated: ${time}`;
+                } else {
+                    // If the node is empty, generate an ID for the first save
+                    elements.patientIdValue.textContent = generatePatientId();
                 }
             } catch (error) {
                 console.error("Failed to fetch logistics data:", error);
@@ -350,7 +368,17 @@
             elements.saveBtn.disabled = true;
             elements.saveBtn.textContent = 'Saving...';
 
+            // Use the displayed PID, which is either loaded from Firebase or freshly generated
+            const currentPid = elements.patientIdValue.textContent.trim();
+
             const logisticsData = {
+                // Patient Info
+                patient_id: currentPid,
+                patient_name: elements.nameInput.value || 'Unknown',
+                patient_age: elements.ageInput.value || 'N/A',
+                patient_gender: elements.genderInput.value || 'M',
+
+                // Assignment Logistics
                 doctor: elements.docInput.value || 'N/A',
                 nurse: elements.nurseInput.value || 'N/A',
                 bed: elements.bedInput.value || 'N/A',
@@ -379,7 +407,7 @@
             }
         }
 
-        // --- VITAL SIGNS FETCH FUNCTION ---
+        // --- VITAL SIGNS FETCH FUNCTION (UNCHANGED) ---
         async function fetchAndUpdateData() {
             try {
                 const response = await fetch(VITAL_API_URL, {
@@ -396,7 +424,6 @@
                     throw new Error('No data received from sender node.');
                 }
 
-                // 1. Initialize charts if necessary
                 if (!ecgChart && data.waveform_times && data.waveform_times.length > 0) {
                     initializeCharts(data.waveform_times);
                 }
@@ -425,27 +452,23 @@
                     rrChart.update();
                 }
 
-                // 4. Update Connection Status based on data's internal status
                 updateStatusDisplay(data.status);
 
             } catch (error) {
                 console.error('Data stream interrupted or assignment failed:', error);
-                // Clear values and set status to error/offline
                 elements.hr.textContent = elements.hrv.textContent = elements.rr.textContent = elements.spo2.textContent = elements.temp.textContent = '--';
                 updateStatusDisplay('ERROR');
 
             } finally {
-                // Ensure the next fetch happens regardless of success/failure
                 setTimeout(fetchAndUpdateData, refreshRate);
             }
         }
 
         // --- AUTORUN LOGIC ---
         document.addEventListener('DOMContentLoaded', () => {
-            // Attach event listener for the save button
             elements.saveBtn.addEventListener('click', saveLogistics);
 
-            // Start reading logistics immediately to populate fields
+            // Start reading logistics immediately to populate fields and get/generate Patient ID
             fetchLogistics();
 
             // Start reading vitals continuously
