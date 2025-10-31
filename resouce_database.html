@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ER Resource Management Console</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f4f4f4; padding: 2rem; }
+        .container { max-width: 800px; background: white; padding: 2rem; border-radius: 0.5rem; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
+        .resource-card { border: 1px solid #ccc; padding: 1rem; border-radius: 0.375rem; display: flex; justify-content: space-between; align-items: center; }
+    </style>
+</head>
+<body>
+    <div class="container mx-auto">
+        <h1 class="text-2xl font-bold mb-6 text-gray-800">🏥 ER Resource Management Console</h1>
+        <p class="text-sm text-gray-500 mb-4">Use this page to set the current availability status of all critical resources. This status is reflected on all monitoring dashboards.</p>
+
+        <div id="resource-grid" class="grid grid-cols-2 gap-4">
+
+            <div class="resource-card">
+                <span class="font-semibold">Trauma Bay 1</span>
+                <select id="bay1-select" class="border rounded px-2 py-1 text-sm">
+                    <option value="AVAILABLE">AVAILABLE</option>
+                    <option value="OCCUPIED">OCCUPIED</option>
+                </select>
+            </div>
+
+            <div class="resource-card">
+                <span class="font-semibold">Resus Bed A</span>
+                <select id="bedA-select" class="border rounded px-2 py-1 text-sm">
+                    <option value="AVAILABLE">AVAILABLE</option>
+                    <option value="OCCUPIED">OCCUPIED</option>
+                </select>
+            </div>
+
+            <div class="resource-card">
+                <span class="font-semibold">Isolation Room</span>
+                <select id="iso-select" class="border rounded px-2 py-1 text-sm">
+                    <option value="AVAILABLE">AVAILABLE</option>
+                    <option value="OCCUPIED">OCCUPIED</option>
+                </select>
+            </div>
+
+             <div class="resource-card">
+                <span class="font-semibold">Monitor Cart</span>
+                <select id="cart-select" class="border rounded px-2 py-1 text-sm">
+                    <option value="AVAILABLE">AVAILABLE</option>
+                    <option value="OCCUPIED">OCCUPIED</option>
+                </select>
+            </div>
+
+        </div>
+
+        <button id="update-resources-btn" class="mt-6 w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 transition-colors">
+            Save All Resource Status
+        </button>
+        <p id="save-message" class="text-sm text-gray-500 mt-2 text-center">Status: Ready</p>
+    </div>
+
+    <script>
+        const RESOURCES_NODE = 'er_resources';
+        const RESOURCES_API_URL = 'https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1.firebasedatabase.app/' + RESOURCES_NODE + '.json';
+
+        const elements = {
+            bay1Select: document.getElementById('bay1-select'),
+            bedASelect: document.getElementById('bedA-select'),
+            isoSelect: document.getElementById('iso-select'),
+            cartSelect: document.getElementById('cart-select'),
+            saveBtn: document.getElementById('update-resources-btn'),
+            saveMessage: document.getElementById('save-message'),
+        };
+
+        // Reads current status from Firebase to populate dropdowns on load
+        async function fetchResources() {
+            try {
+                const response = await fetch(RESOURCES_API_URL);
+                const resources = await response.json();
+
+                if (resources) {
+                    elements.bay1Select.value = resources.trauma_bay_1 || 'OCCUPIED';
+                    elements.bedASelect.value = resources.resus_bed_a || 'OCCUPIED';
+                    elements.isoSelect.value = resources.isolation_room || 'OCCUPIED';
+                    elements.cartSelect.value = resources.monitor_cart || 'OCCUPIED';
+                    elements.saveMessage.textContent = 'Status: Loaded successfully.';
+                }
+            } catch (error) {
+                elements.saveMessage.textContent = 'Status: Failed to load existing data.';
+                console.error("Failed to fetch ER resources:", error);
+            }
+        }
+
+        // Writes new status to Firebase
+        async function updateResources() {
+            elements.saveBtn.disabled = true;
+            elements.saveBtn.textContent = 'Saving...';
+            elements.saveMessage.textContent = 'Status: Saving data...';
+
+            const resourcesData = {
+                trauma_bay_1: elements.bay1Select.value,
+                resus_bed_a: elements.bedASelect.value,
+                isolation_room: elements.isoSelect.value,
+                monitor_cart: elements.cartSelect.value,
+                updated_at: new Date().toISOString()
+            };
+
+            try {
+                const response = await fetch(RESOURCES_API_URL, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(resourcesData)
+                });
+
+                if (response.ok) {
+                    elements.saveMessage.textContent = `Status: Saved successfully at ${new Date().toLocaleTimeString()}.`;
+                } else {
+                    elements.saveMessage.textContent = 'Status: Failed to save (Server Error).';
+                }
+            } catch (error) {
+                elements.saveMessage.textContent = 'Status: Failed to save (Network Error).';
+            } finally {
+                elements.saveBtn.textContent = 'Save All Resource Status';
+                elements.saveBtn.disabled = false;
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            elements.saveBtn.addEventListener('click', updateResources);
+            fetchResources(); // Load current status when the page opens
+        });
+    </script>
+</body>
+</html>
