@@ -3,8 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hospital Reception System</title>
+    <title>Hospital Reception System (Firebase RTDB)</title>
     <script src="https://cdn.tailwindcss.com"></script>
+
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
 
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #f4f4f4; }
@@ -23,8 +26,9 @@
     </style>
 </head>
 <body class="p-4">
-    <header class="mb-4 pb-2 border-b border-gray-300">
+    <header class="mb-4 text-center pb-2 border-b border-gray-300">
         <h1 class="text-2xl font-bold text-gray-800">🏥 HOSPITAL RECEPTION SYSTEM</h1>
+
     </header>
 
     <div class="grid-container">
@@ -33,7 +37,8 @@
             <h2 class="text-lg font-semibold mb-3">Patient Register <span id="active-patient-id" class="text-sm font-normal text-blue-500 ml-2"></span></h2>
             <button id="add-patient-btn" class="w-full bg-blue-500 text-white text-sm py-1 rounded mb-3 hover:bg-blue-600">Add Patient</button>
             <div id="patient-list" class="space-y-2 text-sm">
-                </div>
+                <p class="text-gray-500">Connecting to Firebase...</p>
+            </div>
         </div>
 
         <div class="column">
@@ -44,7 +49,19 @@
                 <div class="p-3 border rounded text-center"><span class="block text-xs text-gray-500">RR (BPM)</span><span id="rr-value" class="text-3xl font-bold text-yellow-600">--</span></div>
                 <div class="p-3 border rounded text-center"><span class="block text-xs text-gray-500">Temp (°C)</span><span id="temp-value" class="text-3xl font-bold text-red-500">--</span></div>
             </div>
-        </div>
+
+            <h3 class="text-md font-semibold mt-4 mb-2 border-t pt-2">Current Assignment</h3>
+            <div id="current-assignment-display" class="space-y-1 text-sm bg-gray-50 p-2 rounded">
+                <p id="assigned-room-name"><span class="font-medium text-gray-600">Room:</span> --</p>
+                <p id="assigned-paramedic-name"><span class="font-medium text-gray-600">EMT:</span> --</p>
+                <p id="assigned-doctor-name"><span class="font-medium text-gray-600">Doctor:</span> --</p>
+                <p id="assigned-nurse-name"><span class="font-medium text-gray-600">Nurse:</span> --</p>
+            </div>
+
+            <button id="discharge-patient-btn" class="w-full bg-green-500 text-white py-2 rounded mt-4 hover:bg-green-600 disabled:bg-gray-400" disabled>
+                ✅ Discharge Patient
+            </button>
+            </div>
 
         <div class="column">
             <h2 class="text-lg font-semibold mb-3">Staff Management</h2>
@@ -79,7 +96,7 @@
 
     </div>
 
-    <div id="patient-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden items-center justify-center">
+    <div id="patient-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden items-center justify-center z-50">
         <div class="bg-white p-6 rounded-lg shadow-xl w-96">
             <h3 class="text-xl font-bold mb-4">Register New Patient</h3>
             <div class="space-y-3">
@@ -93,87 +110,238 @@
                 <input type="text" id="new-p-condition" class="w-full border p-2 rounded text-sm" placeholder="Condition (e.g., Chest Pain)">
             </div>
             <div class="mt-4 flex justify-end space-x-2">
-                <button id="close-modal-btn" class="px-4 py-2 bg-gray-200 rounded text-sm">Cancel</button>
+                <button id="close-patient-modal-btn" class="px-4 py-2 bg-gray-200 rounded text-sm">Cancel</button>
                 <button id="register-new-p-btn" class="px-4 py-2 bg-blue-500 text-white rounded text-sm">Register</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="staff-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white p-6 rounded-lg shadow-xl w-[500px]">
+            <h3 class="text-xl font-bold mb-4">Add/Manage Staff Members</h3>
+
+            <div class="border-b pb-4 mb-4">
+                <h4 class="font-semibold mb-2">➕ Add New Staff</h4>
+                <div class="space-y-3">
+                    <input type="text" id="new-staff-name" class="w-full border p-2 rounded text-sm" placeholder="Full Name">
+                    <select type="text" id="new-staff-type" class="w-full border p-2 rounded text-sm">
+                        <option value="doctor">Doctor</option>
+                        <option value="nurse">Nurse</option>
+                        <option value="paramedic">Paramedic</option>
+                    </select>
+                    <input type="text" id="new-staff-id" class="w-full border p-2 rounded text-sm" placeholder="ID (e.g., DR003, RN003, EMT003) - Optional">
+                </div>
+                <div class="mt-4 flex justify-end">
+                    <button id="register-new-staff-btn" class="px-4 py-2 bg-green-500 text-white rounded text-sm hover:bg-green-600">Add Staff</button>
+                </div>
+            </div>
+
+            <h4 class="font-semibold mb-2">🗑️ Delete Staff Records</h4>
+            <div id="staff-management-list" class="space-y-2 text-sm max-h-60 overflow-y-auto border p-2 rounded">
+                <p class="text-gray-500">Loading staff records...</p>
+            </div>
+
+            <div class="mt-4 flex justify-end">
+                <button id="close-staff-modal-btn" class="px-4 py-2 bg-gray-200 rounded text-sm hover:bg-gray-300">Close Manager</button>
             </div>
         </div>
     </div>
 
 
     <script>
-        // --- FIREBASE API CONFIGURATION ---
-        const BASE_DB_URL = 'https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1.firebasedatabase.app/';
-
-        const API_NODES = {
-            vitals: BASE_DB_URL + 'ambulance_vitals.json',
-            patients: BASE_DB_URL + 'patients.json',
-            staff: BASE_DB_URL + 'staff.json',
-            er_rooms: BASE_DB_URL + 'er_rooms.json'
+        // *** ✅ FIREBASE CONFIGURATION UPDATED ✅ ***
+        const firebaseConfig = {
+          apiKey: "AIzaSyAAUeebZlb07z-90q2noOiSQAZa99Q1RX0",
+          authDomain: "ambulance-monitoring-5ad1a.firebaseapp.com",
+          databaseURL: "https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1.firebasedatabase.app",
+          projectId: "ambulance-monitoring-5ad1a",
+          storageBucket: "ambulance-monitoring-5ad1a.appspot.com",
+          messagingSenderId: "83156963253",
+          appId: "1:83156963253:web:c73fb3f0e80afc9f8b93fc",
+          measurementId: "G-QVBTJZ5XY6"
         };
 
-        const REFRESH_INTERVAL = 2000; // Refresh all data every 2 seconds
+        // Initialize Firebase
+        const app = firebase.initializeApp(firebaseConfig);
+        const db = app.database();
+        const dbRef = db.ref('/'); // Reference to the root of the database
+
+        // Global State (Updated by Firebase listener)
         let currentPatientId = null;
+        let allStaffData = {};
+        let allRoomsData = {};
+        let vitalsData = {};
+        let allPatientsData = {};
 
-        // Initial simulated room setup (will be overwritten by database)
-        const initialRooms = {
-            critical: [
-                { id: 'TB1', type: 'Trauma Bay', triage: 'critical', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '' },
-                { id: 'TB2', type: 'Trauma Bay', triage: 'critical', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '' }
-            ],
-            urgent: [
-                { id: 'RBA', type: 'Resus Bed A', triage: 'urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '' },
-                { id: 'RBB', type: 'Resus Bed B', triage: 'urgent', status: 'AVAILABLE', assigned_paramedic_id: '', assigned_paramedic_id: '' }
-            ],
-            less_urgent: [
-                { id: 'MSR', type: 'Minor Suture Rm', triage: 'less_urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '' },
-                { id: 'OB1', type: 'Observation Bed 1', triage: 'less_urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '' }
-            ]
-        };
+        // --- FIREBASE UTILITIES ---
+
+        /**
+         * Initializes the database with default structure if it is empty.
+         */
+        async function setInitialFirebaseData() {
+            const initialData = getInitialData();
+            return dbRef.set(initialData).catch(error => {
+                console.error("Error writing initial data to Firebase:", error);
+            });
+        }
+
+        /**
+         * Gets the initial data structure with mock values.
+         */
+        function getInitialData() {
+            return {
+                vitals: {
+                    status: 'OFFLINE',
+                    hr: '--',
+                    spo2: '--',
+                    rr: '--',
+                    temp: '--'
+                },
+                patients: {
+                    'P100001': { id: 'P100001', name: 'John Doe', age: 45, gender: 'M', condition: 'Chest Pain', is_active: true, registration_time: new Date().toISOString(), current_room: '', assigned_doctor_id: '', assigned_nurse_id: '' },
+                    'P100002': { id: 'P100002', name: 'Jane Smith', age: 28, gender: 'F', condition: 'Broken Wrist', is_active: true, registration_time: new Date().toISOString(), current_room: '', assigned_doctor_id: '', assigned_nurse_id: '' }
+                },
+                staff: {
+                    paramedics: {
+                        'EMT001': { id: 'EMT001', name: 'EMT A. Jones', status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' },
+                        'EMT002': { id: 'EMT002', name: 'EMT B. Khan', status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' }
+                    },
+                    doctors: {
+                        'DR001': { id: 'DR001', name: 'Dr. C. Lee', status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' },
+                        'DR002': { id: 'DR002', name: 'Dr. D. Patel', status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' }
+                    },
+                    nurses: {
+                        'NRS001': { id: 'NRS001', name: 'RN E. Miller', status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' },
+                        'NRS002': { id: 'NRS002', name: 'RN F. Garcia', status: 'ABSENT', current_assignment_room_id: '', current_assignment_patient_id: '' }
+                    }
+                },
+                er_rooms: {
+                    critical: [
+                        { id: 'TB1', type: 'Trauma Bay', triage: 'critical', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
+                        { id: 'TB2', type: 'Trauma Bay', triage: 'critical', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' }
+                    ],
+                    urgent: [
+                        { id: 'RBA', type: 'Resus Bed A', triage: 'urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
+                        { id: 'RBB', type: 'Resus Bed B', triage: 'urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' }
+                    ],
+                    less_urgent: [
+                        { id: 'MSR', type: 'Minor Suture Rm', triage: 'less_urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
+                        { id: 'OB1', type: 'Observation Bed 1', triage: 'less_urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' }
+                    ]
+                },
+                logistics: {
+                    patient_id: '--',
+                    patient_name: '--',
+                    patient_age: '--',
+                    patient_gender: '--',
+                    doctor: '--',
+                    nurse: '--',
+                    paramedic: '--',
+                    bed: '--',
+                    updated_at: new Date().toISOString()
+                },
+                 er_resources: {
+                    trauma_bay_1: 'AVAILABLE',
+                    resus_bed_a: 'AVAILABLE',
+                    isolation_room: 'AVAILABLE',
+                    monitor_cart: 'AVAILABLE',
+                }
+            };
+        }
 
         // --- UTILITY FUNCTIONS ---
 
         function generateUniqueId() {
-            return 'P' + Math.floor(100000 + Math.random() * 900000).toString();
+            let id;
+            const existingIds = Object.keys(allPatientsData || {});
+            do {
+                id = 'P' + Math.floor(100000 + Math.random() * 900000).toString();
+            } while (existingIds.includes(id));
+            return id;
         }
 
-        async function fetchData(nodeUrl) {
-            try {
-                const response = await fetch(nodeUrl);
-                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-                return await response.json();
-            } catch (error) {
-                console.error(`Error fetching data from ${nodeUrl}:`, error);
-                return null;
-            }
+        function generateStaffId(type, existingIds) {
+            let prefix = '';
+            if (type === 'doctor') prefix = 'DR';
+            else if (type === 'nurse') prefix = 'NRS';
+            else if (type === 'paramedic') prefix = 'EMT';
+
+            let id;
+            let counter = 1;
+            do {
+                id = prefix + String(counter).padStart(3, '0');
+                counter++;
+            } while (existingIds.includes(id));
+            return id;
         }
 
-        async function updateData(nodeUrl, data) {
-            try {
-                const response = await fetch(nodeUrl, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-                return true;
-            } catch (error) {
-                console.error(`Error updating data at ${nodeUrl}:`, error);
-                return false;
+        function getStaffName(type, id) {
+            const staffKey = type + 's';
+            return (allStaffData[staffKey] && allStaffData[staffKey][id]?.name) || id;
+        }
+
+        // --- MAIN REAL-TIME LISTENER ---
+
+        function renderDashboardFromFirebase(snapshot) {
+            const db = snapshot.val();
+
+            if (!db) {
+                console.warn("Firebase DB is empty. Initializing with mock data.");
+                setInitialFirebaseData();
+                return;
             }
+
+            // 1. Update Global State from the snapshot
+            vitalsData = db.vitals || {};
+            allStaffData = db.staff || getInitialData().staff;
+            allRoomsData = db.er_rooms || getInitialData().er_rooms;
+            allPatientsData = db.patients || {};
+
+            // 2. Render UI
+            renderVitals(vitalsData);
+            renderPatientList(db.patients);
+            renderCurrentAssignment(currentPatientId, allRoomsData, allStaffData, db.patients);
+
+            renderStaff('paramedic-list', allStaffData, 'paramedic');
+            renderStaff('doctor-list', allStaffData, 'doctor');
+            renderStaff('nurse-list', allStaffData, 'nurse');
+
+            renderRooms(allRoomsData);
+
+            renderManagementStaffList(allStaffData);
+
+            // ⭐ FIX: Call the dedicated Discharge Button handler
+            updateDischargeButtonStatus();
         }
 
         // --- RENDER FUNCTIONS ---
+
+        /**
+         * Explicitly enables/disables the Discharge button based on selected patient's status.
+         */
+        function updateDischargeButtonStatus() {
+            const dischargeButton = document.getElementById('discharge-patient-btn');
+
+            // Check global state: currentPatientId and its assignment status
+            const patient = currentPatientId ? allPatientsData[currentPatientId] : null;
+
+            let isAssigned = false;
+            // The button should be enabled ONLY if a patient is selected AND they are assigned to a room (not 'DISCHARGED').
+            if (currentPatientId && patient && patient.current_room && patient.current_room !== 'DISCHARGED') {
+                 isAssigned = true;
+            }
+
+            dischargeButton.disabled = !isAssigned;
+        }
+
 
         function renderStaff(listId, staffData, type) {
             const listElement = document.getElementById(listId);
             listElement.innerHTML = '';
 
-            if (!staffData) return;
+            const safeStaffData = staffData || {};
+            const staffArray = Object.values(safeStaffData[type+'s'] || {});
 
-            // Convert object to array for sorting
-            const staffArray = Object.values(staffData);
-
-            // Sort: Available first, then Assigned, then Absent
             staffArray.sort((a, b) => {
                 const statusOrder = { 'AVAILABLE': 1, 'ASSIGNED': 2, 'ABSENT': 3 };
                 return statusOrder[a.status] - statusOrder[b.status];
@@ -188,7 +356,7 @@
                     details = ' (Absent)';
                 } else if (staff.status === 'ASSIGNED') {
                     statusClass = 'assigned';
-                    details = ` (Assigned to ${staff.current_assignment_patient_id || 'Room'})`;
+                    details = ` (Assigned to ${staff.current_assignment_room_id || 'Patient'})`;
                 } else {
                     statusClass = 'available';
                     details = ' (Available)';
@@ -203,6 +371,42 @@
             });
         }
 
+        function renderManagementStaffList(staffData) {
+            const listElement = document.getElementById('staff-management-list');
+            listElement.innerHTML = '';
+
+            const staffTypes = ['doctor', 'nurse', 'paramedic'];
+            let html = '';
+
+            staffTypes.forEach(type => {
+                const typeKey = type + 's';
+                const staffArray = Object.values(staffData[typeKey] || {});
+
+                if (staffArray.length > 0) {
+                    html += `<p class="font-medium mt-3 text-blue-700">${type.charAt(0).toUpperCase() + type.slice(1)}s:</p>`;
+                    staffArray.forEach(staff => {
+                        const deleteDisabled = staff.status === 'ASSIGNED' ? 'disabled' : '';
+                        const deleteClass = staff.status === 'ASSIGNED' ? 'bg-gray-400 cursor-not-allowed' : 'bg-red-500 hover:bg-red-600';
+
+                        html += `
+                            <div class="staff-item bg-gray-50 rounded">
+                                <span>${staff.name} (<span class="font-semibold">${staff.id}</span>)</span>
+                                <button onclick="deleteStaff('${type}', '${staff.id}')" ${deleteDisabled} class="text-white text-xs py-1 px-2 rounded ${deleteClass}">
+                                    ${deleteDisabled ? 'Assigned' : 'Delete'}
+                                </button>
+                            </div>
+                        `;
+                    });
+                }
+            });
+
+            if (html === '') {
+                listElement.innerHTML = '<p class="text-gray-500">No staff records found in the system.</p>';
+            } else {
+                listElement.innerHTML = html;
+            }
+        }
+
         function renderRooms(roomsData) {
             const containerIds = {
                 critical: 'critical-rooms',
@@ -214,17 +418,28 @@
                 const roomList = document.getElementById(containerIds[triage]);
                 roomList.innerHTML = '';
 
-                roomsData[triage].forEach(room => {
-                    const statusClass = room.status === 'AVAILABLE' ? 'available' : 'occupied';
+                const roomsArray = Array.isArray(roomsData[triage]) ? roomsData[triage] : Object.values(roomsData[triage] || {});
+
+                roomsArray.forEach(room => {
+                    const statusClass = room.status === 'AVAILABLE' ? 'available' : 'assigned';
                     const assignment = room.assigned_patient_id ? `Patient ${room.assigned_patient_id}` : 'Unassigned';
-                    const paramedic = room.assigned_paramedic_id ? `(EMT: ${room.assigned_paramedic_id})` : '';
+
+                    const paramedicName = getStaffName('paramedic', room.assigned_paramedic_id);
+                    const doctorName = getStaffName('doctor', room.assigned_doctor_id);
+                    const nurseName = getStaffName('nurse', room.assigned_nurse_id);
+
+
+                    let staffDetails = '';
+                    if (room.assigned_doctor_id) staffDetails += ` Dr: ${doctorName}`;
+                    if (room.assigned_nurse_id) staffDetails += ` RN: ${nurseName}`;
+                    if (room.assigned_paramedic_id) staffDetails += ` EMT: ${paramedicName}`;
 
                     roomList.innerHTML += `
                         <div class="room-item bg-gray-50 rounded text-sm">
                             <span class="font-medium ${room.triage}">${room.type} - ${room.id}</span>
-                            <span class="text-xs">
+                            <span class="text-xs flex items-center">
                                 <span class="status-dot ${statusClass}"></span>
-                                ${assignment} ${paramedic}
+                                ${assignment} ${staffDetails ? `<span class="text-blue-600 ml-1">(${staffDetails.trim()})</span>` : ''}
                             </span>
                         </div>
                     `;
@@ -241,132 +456,506 @@
                 return;
             }
 
-            // Convert patients object to array
-            const patientArray = Object.values(patientsData);
+            // Filter to only include ACTIVE patients (is_active: true)
+            const activePatientsArray = Object.values(patientsData).filter(patient => patient.is_active);
+
+            const patientArray = activePatientsArray.sort((a, b) => {
+                return new Date(a.registration_time) - new Date(b.registration_time);
+            });
+
+            if (patientArray.length === 0) {
+                 listElement.innerHTML = '<p class="text-gray-500">No active patients in the system.</p>';
+                 if (currentPatientId && !patientsData[currentPatientId]?.is_active) {
+                     currentPatientId = null;
+                 }
+            }
+
 
             patientArray.forEach(patient => {
                 const isSelected = patient.id === currentPatientId;
-                const statusColor = patient.is_active ? 'border-green-500' : 'border-gray-300';
+                const statusColor = patient.current_room ? 'border-green-500 bg-green-50' : 'border-blue-500';
+                const statusText = patient.current_room ? `Assigned to ${patient.current_room}` : 'Awaiting Assignment';
 
                 listElement.innerHTML += `
                     <div class="p-2 border ${statusColor} rounded cursor-pointer hover:bg-gray-100 ${isSelected ? 'bg-blue-100' : ''}"
                          onclick="selectPatient('${patient.id}', '${patient.name}')">
                         <span class="font-medium">${patient.name} (${patient.age}/${patient.gender})</span>
-                        <span class="block text-xs text-gray-500">PID: ${patient.id} - ${patient.condition}</span>
+                        <span class="block text-xs text-gray-500">PID: ${patient.id} - ${patient.condition} (<span class="font-semibold">${statusText}</span>)</span>
                     </div>
                 `;
             });
-            // If a patient is selected, ensure their name is displayed in the vitals column
+
             if (currentPatientId) {
                 const selectedPatient = patientArray.find(p => p.id === currentPatientId);
                 document.getElementById('vitals-patient-name').textContent = selectedPatient ? `(${selectedPatient.name})` : '';
+            } else {
+                document.getElementById('vitals-patient-name').textContent = '';
             }
         }
 
-        function renderVitals(vitalsData) {
-            // Check if a patient is selected and if the ambulance is sending data
-            if (!vitalsData || vitalsData.status === 'BUFFERING' || vitalsData.status === 'INITIALIZING' || !currentPatientId) {
+        function renderCurrentAssignment(patientId, allRoomsData, allStaffData, patientsData) {
+            const roomDisplay = document.getElementById('assigned-room-name');
+            const paramedicDisplay = document.getElementById('assigned-paramedic-name');
+            const doctorDisplay = document.getElementById('assigned-doctor-name');
+            const nurseDisplay = document.getElementById('assigned-nurse-name');
+
+            let assignedRoom = null;
+            let assignedDoctorId = null;
+            let assignedNurseId = null;
+
+            if (patientId) {
+                const patient = patientsData[patientId];
+                if (patient) {
+                    assignedDoctorId = patient.assigned_doctor_id;
+                    assignedNurseId = patient.assigned_nurse_id;
+
+                    for (const triage in allRoomsData) {
+                        const roomsArray = Array.isArray(allRoomsData[triage]) ? allRoomsData[triage] : Object.values(allRoomsData[triage] || {});
+                        const room = roomsArray.find(r => r.assigned_patient_id === patientId);
+                        if (room) {
+                            assignedRoom = room;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (assignedRoom) {
+                const docName = getStaffName('doctor', assignedDoctorId || '--');
+                const nurseName = getStaffName('nurse', assignedNurseId || '--');
+                const emtName = getStaffName('paramedic', assignedRoom.assigned_paramedic_id || '--');
+
+
+                roomDisplay.innerHTML = `<span class="font-medium text-gray-600">Room:</span> <span class="font-bold text-red-600">${assignedRoom.type} (${assignedRoom.id})</span>`;
+                paramedicDisplay.innerHTML = `<span class="font-medium text-gray-600">EMT:</span> ${emtName}`;
+                doctorDisplay.innerHTML = `<span class="font-medium text-gray-600">Doctor:</span> ${docName}`;
+                nurseDisplay.innerHTML = `<span class="font-medium text-gray-600">Nurse:</span> ${nurseName}`;
+            } else {
+                roomDisplay.innerHTML = `<span class="font-medium text-gray-600">Room:</span> --`;
+                paramedicDisplay.innerHTML = `<span class="font-medium text-gray-600">EMT:</span> --`;
+                doctorDisplay.innerHTML = `<span class="font-medium text-gray-600">Doctor:</span> --`;
+                nurseDisplay.innerHTML = `<span class="font-medium text-gray-600">Nurse:</span> --`;
+            }
+        }
+
+        function renderVitals(data) {
+            if (!data || !currentPatientId) {
                  document.getElementById('hr-value').textContent = '--';
                  document.getElementById('spo2-value').textContent = '--';
                  document.getElementById('rr-value').textContent = '--';
                  document.getElementById('temp-value').textContent = '--';
-                 document.getElementById('active-patient-id').textContent = '(Vitals Buffering/Offline)';
+                 document.getElementById('active-patient-id').textContent = '(Select Patient)';
                  return;
             }
 
-            document.getElementById('hr-value').textContent = vitalsData.hr || '--';
-            document.getElementById('spo2-value').textContent = vitalsData.spo2 || '--';
-            document.getElementById('rr-value').textContent = vitalsData.rr || '--';
-            document.getElementById('temp-value').textContent = vitalsData.temp || '--';
-            document.getElementById('active-patient-id').textContent = `(PID: ${currentPatientId} - Live)`;
+            const patient = allPatientsData[currentPatientId];
+
+            if (data.status === 'LIVE' && patient.current_room !== 'DISCHARGED') {
+
+                document.getElementById('hr-value').textContent = data.hr || '--';
+                document.getElementById('spo2-value').textContent = data.spo2 || '--';
+                document.getElementById('rr-value').textContent = data.rr || '--';
+                document.getElementById('temp-value').textContent = data.temp || '--';
+                document.getElementById('active-patient-id').textContent = `(PID: ${currentPatientId} - Live)`;
+            } else {
+                document.getElementById('hr-value').textContent = '--';
+                document.getElementById('spo2-value').textContent = '--';
+                document.getElementById('rr-value').textContent = '--';
+                document.getElementById('temp-value').textContent = '--';
+                document.getElementById('active-patient-id').textContent = '(Vitals Offline)';
+            }
         }
 
 
-        // --- MAIN DATA LOOP ---
+        // --- FIREBASE DATA MODIFICATION HANDLERS ---
 
-        async function refreshDashboard() {
-            const [vitals, patients, staff, rooms] = await Promise.all([
-                fetchData(API_NODES.vitals),
-                fetchData(API_NODES.patients),
-                fetchData(API_NODES.staff),
-                fetchData(API_NODES.er_rooms)
-            ]);
+        async function handleStaffRegistration() {
+            const name = document.getElementById('new-staff-name').value.trim();
+            const type = document.getElementById('new-staff-type').value;
+            let id = document.getElementById('new-staff-id').value.trim();
 
-            renderVitals(vitals);
-            renderPatientList(patients);
-            renderStaff('paramedic-list', staff ? staff.paramedics : null, 'paramedic');
-            renderStaff('doctor-list', staff ? staff.doctors : null, 'doctor');
-            renderStaff('nurse-list', staff ? staff.nurses : null, 'nurse');
-            renderRooms(rooms || initialRooms);
-        }
-
-        // --- EVENT HANDLERS ---
-
-        // This is called when a user clicks a patient in the list
-        window.selectPatient = function(patientId, patientName) {
-            currentPatientId = patientId;
-            // The refreshDashboard loop will automatically update the vitals based on this ID
-            refreshDashboard();
-        }
-
-        // Handles the patient registration modal logic
-        async function handlePatientRegistration() {
-            const name = document.getElementById('new-p-name').value;
-            const age = document.getElementById('new-p-age').value;
-            const gender = document.getElementById('new-p-gender').value;
-            const condition = document.getElementById('new-p-condition').value;
-
-            if (!name || !age) {
-                alert("Please enter patient name and age.");
+            if (!name) {
+                alert("Please enter the staff member's name.");
                 return;
             }
 
-            const newPatientId = generateUniqueId();
-            const newPatientData = {
-                id: newPatientId,
+            const typeKey = type + 's';
+            const existingIds = Object.keys(allStaffData[typeKey] || {});
+
+            if (!id) {
+                id = generateStaffId(type, existingIds);
+            } else if (existingIds.includes(id)) {
+                 alert(`Error: ID '${id}' already exists for ${typeKey}. Please choose a unique ID.`);
+                 return;
+            }
+
+            const newStaffData = {
+                id: id,
                 name: name,
-                age: age,
-                gender: gender,
-                condition: condition,
-                is_active: true,
-                registration_time: new Date().toISOString()
+                status: 'AVAILABLE',
+                current_assignment_room_id: '',
+                current_assignment_patient_id: ''
             };
 
-            // Save the new patient under the 'patients' node using the patient ID as key
-            const success = await updateData(API_NODES.patients + `/${newPatientId}.json`, newPatientData);
+            const path = `staff/${typeKey}/${id}`;
 
-            if (success) {
-                alert(`Patient ${name} registered with ID: ${newPatientId}`);
-                document.getElementById('patient-modal').style.display = 'none';
-                refreshDashboard(); // Update the list
+            try {
+                await db.ref(path).set(newStaffData);
+                alert(`${name} (${id}) added successfully to ${typeKey}.`);
+                document.getElementById('new-staff-name').value = '';
+                document.getElementById('new-staff-id').value = '';
+            } catch (error) {
+                console.error("Firebase Staff Registration Error:", error);
+                alert("Failed to register staff member.");
             }
         }
 
-        // Placeholder for managing staff—could open a new window or modal
+        window.deleteStaff = async function(staffType, staffId) {
+            const staff = allStaffData[staffType + 's']?.[staffId];
+            if (!staff) return;
+
+            if (staff.status === 'ASSIGNED') {
+                 alert(`Cannot delete ${staff.name}. They are currently assigned to a room.`);
+                 return;
+            }
+
+            if (!confirm(`Are you sure you want to permanently delete ${staffId} (${staff.name})? This action cannot be undone.`)) {
+                return;
+            }
+
+            try {
+                const typeKey = staffType + 's';
+                const path = `staff/${typeKey}/${staffId}`;
+
+                await db.ref(path).remove();
+
+                alert(`Staff member ${staffId} deleted successfully.`);
+            } catch (error) {
+                console.error("Firebase Staff Deletion Error:", error);
+                alert("An error occurred during staff deletion.");
+            }
+        }
+
+/**
+ * Monitors the patient list and attempts to auto-assign resources to any active, unassigned patient.
+ * This is triggered periodically to catch patients registered via the Ambulatory Monitor.
+ */
+function monitorForAutoAssignment() {
+    console.log("Monitoring for unassigned patients...");
+    // Use the global state which is continually updated by the listener
+    const activePatientsArray = Object.values(allPatientsData).filter(p => p.is_active && !p.current_room);
+
+    if (activePatientsArray.length > 0) {
+        // We will call autoAssignPatient for the first unassigned patient found
+        const patientToAssign = activePatientsArray[0];
+        console.log(`Found unassigned patient: ${patientToAssign.id}. Attempting auto-assignment.`);
+
+        // Use setTimeout to ensure the assignment is non-blocking and gets fresh resources
+        setTimeout(() => autoAssignPatient(patientToAssign.id), 100);
+    }
+}
+        // Automated Assignment Logic (Direct Firebase Fetch)
+async function autoAssignPatient(patientId) {
+
+    // Fetch ALL required data in a single, fresh read from the database root
+    const snapshot = await dbRef.once('value');
+    const dbData = snapshot.val();
+
+    if (!dbData) return;
+
+    // Use fresh data for the resources and the patient
+    const allStaffDataFresh = dbData.staff || {};
+    const allRoomsDataFresh = dbData.er_rooms || {};
+    const patient = dbData.patients[patientId];
+
+    // Check if patient exists, is active, and is awaiting room assignment
+    if (!patient || !patient.is_active || patient.current_room) {
+        return;
+    }
+
+    console.log(`Attempting auto-assignment for ${patientId}...`);
+
+    // --- 1. FIND AVAILABLE RESOURCES using FRESH data ---
+    const triageOrder = ['critical', 'urgent', 'less_urgent'];
+    let foundRoomAssignment = null;
+
+    // Find first available room
+    for (const triageCategory of triageOrder) {
+        const roomsArray = Array.isArray(allRoomsDataFresh[triageCategory]) ? allRoomsDataFresh[triageCategory] : Object.values(allRoomsDataFresh[triageCategory] || {});
+        const roomIndex = roomsArray.findIndex(r => r.status === 'AVAILABLE');
+
+        if (roomIndex !== -1) {
+            foundRoomAssignment = {
+                triage: triageCategory,
+                index: roomIndex,
+                room: roomsArray[roomIndex]
+            };
+            break;
+        }
+    }
+
+    // Function to find available staff from the freshly fetched staff data
+    const findAvailableStaff = (type) => {
+        const staffKey = type + 's';
+        const staffArray = Object.values(allStaffDataFresh[staffKey] || {});
+        return staffArray.find(s => s.status === 'AVAILABLE');
+    };
+
+    const assignedDoctor = findAvailableStaff('doctor');
+    const assignedNurse = findAvailableStaff('nurse');
+    const assignedParamedic = findAvailableStaff('paramedic');
+
+    // --- 2. EXECUTE ASSIGNMENT IF ALL RESOURCES ARE FOUND ---
+    if (foundRoomAssignment && assignedDoctor && assignedNurse && assignedParamedic) {
+
+        console.log(`Auto-assignment successful for ${patientId}. Deploying resources.`);
+
+        const { triage, index, room } = foundRoomAssignment;
+        const updates = {};
+
+        // A. Room Update (Update the state of the room in the array)
+        updates[`er_rooms/${triage}/${index}`] = {
+            ...room,
+            status: 'OCCUPIED',
+            assigned_patient_id: patientId,
+            assigned_paramedic_id: assignedParamedic.id,
+            assigned_doctor_id: assignedDoctor.id,
+            assigned_nurse_id: assignedNurse.id,
+            last_assigned: new Date().toISOString()
+        };
+
+        // B. Staff Updates (Update the state of staff)
+        const staffUpdatePayload = { status: 'ASSIGNED', current_assignment_room_id: room.id, current_assignment_patient_id: patientId };
+        updates[`staff/paramedics/${assignedParamedic.id}`] = { ...allStaffDataFresh.paramedics[assignedParamedic.id], ...staffUpdatePayload };
+        updates[`staff/doctors/${assignedDoctor.id}`] = { ...allStaffDataFresh.doctors[assignedDoctor.id], ...staffUpdatePayload };
+        updates[`staff/nurses/${assignedNurse.id}`] = { ...allStaffDataFresh.nurses[assignedNurse.id], ...staffUpdatePayload };
+
+        // C. Patient Update
+        updates[`patients/${patientId}`] = {
+            ...patient,
+            current_room: room.id,
+            assigned_doctor_id: assignedDoctor.id,
+            assigned_nurse_id: assignedNurse.id,
+        };
+
+        // D. Logistics Node Update (Crucial for Monitor Dashboard)
+        updates['logistics'] = {
+            patient_id: patient.id,
+            patient_name: patient.name,
+            patient_age: patient.age.toString(),
+            patient_gender: patient.gender,
+            doctor: assignedDoctor.name,
+            nurse: assignedNurse.name,
+            paramedic: assignedParamedic.name,
+            bed: `${room.type} (${room.id})`,
+            updated_at: new Date().toISOString()
+        };
+
+        await dbRef.update(updates);
+        alert(`AUTOMATED ASSIGNMENT: Patient ${patientId} assigned to ${room.id} (${triage.toUpperCase()})!`);
+        currentPatientId = null; // Deselect patient after assignment
+
+        // ⭐ NEW: Trigger immediate UI refresh after successful assignment
+        dbRef.once('value', renderDashboardFromFirebase);
+
+    } else {
+        // --- 3. ASSIGNMENT FAILED ---
+        let missing = [];
+        if (!foundRoomAssignment) missing.push('Room');
+        if (!assignedDoctor) missing.push('Doctor');
+        if (!assignedNurse) missing.push('Nurse');
+        if (!assignedParamedic) missing.push('Paramedic');
+
+        console.warn(`Auto-assignment failed for ${patientId}. Missing resources: ${missing.join(', ')}. Patient is awaiting manual assignment.`);
+    }
+}
+
+
+        async function dischargePatient() {
+            const patientId = currentPatientId;
+            const patient = allPatientsData[patientId];
+
+            if (!patient || !patient.current_room || patient.current_room === 'DISCHARGED') {
+                 alert("Selected patient is not currently assigned to a room.");
+                 return;
+            }
+
+            if (!confirm(`Confirm discharge of Patient ${patient.id} (${patient.name}) from Room ${patient.current_room}? This will free up all resources.`)) {
+                return;
+            }
+
+            const dischargeButton = document.getElementById('discharge-patient-btn');
+            dischargeButton.disabled = true;
+            dischargeButton.textContent = 'Discharging...';
+
+            try {
+                let roomToUpdate = null;
+                let roomTriageCategory = null;
+                let roomIndex = -1;
+
+                for (const triage in allRoomsData) {
+                    const roomsArray = Array.isArray(allRoomsData[triage]) ? allRoomsData[triage] : Object.values(allRoomsData[triage] || {});
+                    roomIndex = roomsArray.findIndex(r => r.assigned_patient_id === patientId);
+                    if (roomIndex !== -1) {
+                        roomToUpdate = roomsArray[roomIndex];
+                        roomTriageCategory = triage;
+                        break;
+                    }
+                }
+
+                if (!roomToUpdate) throw new Error("Assigned room not found in ER room list.");
+
+                const paramedicId = roomToUpdate.assigned_paramedic_id;
+                const doctorId = roomToUpdate.assigned_doctor_id;
+                const nurseId = roomToUpdate.assigned_nurse_id;
+
+                // --- BUNDLE ALL UPDATES FOR A SINGLE FIREBASE TRANSACTION ---
+                const updates = {};
+
+                // A. Free up Room
+                const roomUpdate = {
+                    status: 'AVAILABLE',
+                    assigned_patient_id: '',
+                    assigned_paramedic_id: '',
+                    assigned_doctor_id: '',
+                    assigned_nurse_id: '',
+                    last_discharged: new Date().toISOString()
+                };
+                updates[`er_rooms/${roomTriageCategory}/${roomIndex}`] = {...roomToUpdate, ...roomUpdate};
+
+                // B. Free up Staff
+                const staffUpdate = { status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' };
+                if (paramedicId) updates[`staff/paramedics/${paramedicId}`] = {...allStaffData.paramedics[paramedicId], ...staffUpdate};
+                if (doctorId) updates[`staff/doctors/${doctorId}`] = {...allStaffData.doctors[doctorId], ...staffUpdate};
+                if (nurseId) updates[`staff/nurses/${nurseId}`] = {...allStaffData.nurses[nurseId], ...staffUpdate};
+
+                // C. Update Patient to Discharged/Inactive
+                const patientUpdate = {
+                    is_active: false,
+                    current_room: 'DISCHARGED',
+                    assigned_doctor_id: '',
+                    assigned_nurse_id: '',
+                    discharge_time: new Date().toISOString()
+                };
+                updates[`patients/${patientId}`] = {...patient, ...patientUpdate};
+
+                // D. Reset Logistics Node
+                updates['logistics'] = getInitialData().logistics;
+
+                // Perform the batch update
+                await dbRef.update(updates);
+
+                alert(`Patient ${patientId} discharged. Room ${roomToUpdate.id} and all assigned staff are now AVAILABLE.`);
+
+                // ⭐ NEW: Trigger immediate UI refresh after successful discharge
+                dbRef.once('value', renderDashboardFromFirebase);
+
+            } catch (error) {
+                console.error("Critical Discharge Error:", error);
+                alert("Discharge failed: " + error.message);
+            } finally {
+                dischargeButton.textContent = '✅ Discharge Patient';
+                dischargeButton.disabled = false;
+                currentPatientId = null;
+            }
+        }
+
+async function handlePatientRegistration() {
+    const name = document.getElementById('new-p-name').value.trim();
+    const age = document.getElementById('new-p-age').value.trim();
+    const gender = document.getElementById('new-p-gender').value;
+    const condition = document.getElementById('new-p-condition').value.trim();
+
+    if (!name || !age || !condition) {
+        alert("Please enter patient name, age, and condition.");
+        return;
+    }
+
+    const newPatientId = generateUniqueId();
+    const newPatientData = {
+        id: newPatientId,
+        name: name,
+        age: parseInt(age),
+        gender: gender,
+        condition: condition,
+        is_active: true,
+        registration_time: new Date().toISOString(),
+        current_room: '',
+        assigned_doctor_id: '',
+        assigned_nurse_id: ''
+    };
+
+    const path = `patients/${newPatientId}`;
+
+    try {
+        await db.ref(path).set(newPatientData);
+        alert(`Patient ${name} registered with ID: ${newPatientId}`);
+
+        // Trigger auto-assignment immediately for local clicks.
+        autoAssignPatient(newPatientId);
+
+        // ⭐ NEW: Trigger immediate UI refresh after saving new patient
+        dbRef.once('value', renderDashboardFromFirebase);
+
+        document.getElementById('patient-modal').style.display = 'none';
+        document.getElementById('new-p-name').value = '';
+        document.getElementById('new-p-age').value = '';
+        document.getElementById('new-p-condition').value = '';
+    } catch (error) {
+        console.error("Firebase Patient Registration Error:", error);
+        alert("Failed to register patient.");
+    }
+}
+
+
+        // --- EVENT HANDLERS ---
+
+        window.selectPatient = function(patientId, patientName) {
+            if (currentPatientId === patientId) {
+                currentPatientId = null;
+            } else {
+                currentPatientId = patientId;
+            }
+            // Manually force a UI redraw on patient selection to ensure immediate feedback
+            dbRef.once('value', renderDashboardFromFirebase);
+        }
+
         function handleManageStaff() {
-            alert("Staff Management panel would open here to add/edit staff members and change their status (Absent/Available).");
+            document.getElementById('staff-modal').style.display = 'flex';
         }
 
 
         // --- INITIALIZATION ---
 
         document.addEventListener('DOMContentLoaded', () => {
-            // Setup modals
+
+            // 🟢 START REAL-TIME LISTENER
+            dbRef.on('value', renderDashboardFromFirebase, (error) => {
+                console.error("Firebase Listener Failed:", error);
+                alert("Connection to Realtime Database failed. Check console and configuration.");
+            });
+
+            // ⭐ START MONITORING LOOP: Checks every 3 seconds for patients awaiting assignment (from Ambulatory Monitor)
+            setInterval(monitorForAutoAssignment, 3000);
+
+            // Patient Modal Handlers
             document.getElementById('add-patient-btn').addEventListener('click', () => {
                 document.getElementById('patient-modal').style.display = 'flex';
             });
-            document.getElementById('close-modal-btn').addEventListener('click', () => {
+            document.getElementById('close-patient-modal-btn').addEventListener('click', () => {
                 document.getElementById('patient-modal').style.display = 'none';
             });
             document.getElementById('register-new-p-btn').addEventListener('click', handlePatientRegistration);
 
-            // FIX: Attach handler to Manage Staff button
+            // Staff Modal Handlers
             document.getElementById('manage-staff-btn').addEventListener('click', handleManageStaff);
+            document.getElementById('close-staff-modal-btn').addEventListener('click', () => {
+                 document.getElementById('staff-modal').style.display = 'none';
+            });
+            document.getElementById('register-new-staff-btn').addEventListener('click', handleStaffRegistration);
 
-
-            // Start the periodic refresh loop
-            refreshDashboard();
-            setInterval(refreshDashboard, REFRESH_INTERVAL);
+            // Core Logic Handlers
+            document.getElementById('discharge-patient-btn').addEventListener('click', dischargePatient);
         });
 
     </script>
