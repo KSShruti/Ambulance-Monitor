@@ -3,10 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ambulatory Patient Monitor - Hospital Logistics</title>
+    <title>Ambulatory Patient Monitor - Hospital View (Firebase Sync)</title>
 
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js"></script>
+
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
 
     <style>
         /* Custom styles for light-mode, professional monitoring look */
@@ -84,24 +87,32 @@
             gap: 0.4rem;
             height: 100%;
         }
+        /* Style for data entry fields */
+        .logistics-input {
+            border: 1px solid #ccc;
+            border-radius: 0.25rem;
+            padding: 0.5rem;
+            font-size: 0.875rem;
+            color: #1f2937;
+        }
     </style>
 </head>
 <body class="flex flex-col h-screen p-4">
 
-    <header class="flex justify-between items-center mb-3 text-[#1f2937] border-b border-gray-300 pb-2">
+    <header class="flex justify-between items-center  mb-3 text-[#1f2937] border-b border-gray-300 pb-2">
 
         <div class="flex items-center gap-4">
-            <h1 class="text-xl font-bold">Ambulatory Monitor (Hospital View)</h1>
+            <h1 class="text-xl font-bold">Ambulatory Monitor </h1>
+
         </div>
 
         <div class="flex items-center gap-4">
-             <div class="flex flex-col text-sm font-semibold text-right p-1 rounded">
-                <p class="text-base text-gray-700">Patient ID: <span id="patient-id-value" class="font-bold text-gray-900">--</span></p>
-
+             <div class="text-base font-semibold text-right">
+                 <p>Patient ID: <span id="patient-id-value" class="font-bold text-gray-900">--</span></p>
                 <div class="flex gap-2 justify-end text-sm mt-1">
-                    <input type="text" id="patient-name-input" class="border rounded px-1 w-24 text-sm" placeholder="Name">
-                    <input type="number" id="patient-age-input" class="border rounded px-1 w-12 text-sm" placeholder="Age">
-                    <select id="patient-gender-input" class="border rounded px-1 text-sm">
+                    <input type="text" id="patient-name-input" class="logistics-input w-24" placeholder="Name">
+                    <input type="number" id="patient-age-input" class="logistics-input w-12" placeholder="Age">
+                    <select id="patient-gender-input" class="logistics-input w-10">
                         <option value="M">M</option>
                         <option value="F">F</option>
                         <option value="O">O</option>
@@ -118,31 +129,36 @@
     <div class="logistics-panel flex flex-col gap-3 mb-4 p-3 bg-white border border-gray-300 rounded-lg shadow">
         <h2 class="text-base font-bold text-gray-700">Patient Assignment & Logistics:</h2>
 
-        <div class="grid grid-cols-5 gap-4 items-center">
+        <div class="grid grid-cols-6 gap-4 items-center">
 
-            <div class="flex flex-col">
+            <div class="flex flex-col col-span-1">
                 <span class="text-xs text-gray-500 mb-1">Assigned Doctor:</span>
-                <input type="text" id="doc-input" class="border rounded px-2 py-1 text-sm focus:border-blue-500" placeholder="Dr. Smith, Cardiology">
+                <input type="text" id="doc-input" class="logistics-input bg-gray-100" placeholder="Dr. Smith, Cardiology" disabled>
             </div>
 
-            <div class="flex flex-col">
+            <div class="flex flex-col col-span-1">
                 <span class="text-xs text-gray-500 mb-1">Assigned Nurse:</span>
-                <input type="text" id="nurse-input" class="border rounded px-2 py-1 text-sm focus:border-blue-500" placeholder="Nurse Ann, Trauma">
+                <input type="text" id="nurse-input" class="logistics-input bg-gray-100" placeholder="Nurse Ann, Trauma" disabled>
             </div>
 
-            <div class="flex flex-col">
+            <div class="flex flex-col col-span-1">
                 <span class="text-xs text-gray-500 mb-1">Assigned Paramedic:</span>
-                <input type="text" id="paramedic-input" class="border rounded px-2 py-1 text-sm focus:border-blue-500" placeholder="EMT John">
+                <input type="text" id="paramedic-input" class="logistics-input bg-gray-100" placeholder="EMT John" disabled>
             </div>
 
-            <div class="flex flex-col">
+            <div class="flex flex-col col-span-1">
                 <span class="text-xs text-gray-500 mb-1">Target Bed/Room:</span>
-                <input type="text" id="bed-input" class="border rounded px-2 py-1 text-sm focus:border-blue-500" placeholder="ER Bay 4">
+                <input type="text" id="bed-input" class="logistics-input bg-gray-100 font-bold text-red-600" placeholder="Awaiting Assignment..." disabled>
             </div>
 
-            <button id="save-logistics-btn" class="self-end bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 transition-colors h-10">
-                Update Logistics
+            <button id="save-logistics-btn" class="self-end bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 transition-colors h-10 col-span-1">
+                Register/Update Patient
             </button>
+
+            <button id="clear-monitor-btn" class="self-end bg-red-600 text-white px-3 py-1.5 rounded text-sm hover:bg-red-700 transition-colors h-10 col-span-1">
+                Clear Monitor Stream
+            </button>
+
         </div>
         <p class="text-xs text-gray-500 text-right" id="logistics-updated-time">Last updated: --</p>
     </div>
@@ -206,12 +222,34 @@
 
 
     <script>
-        // --- FIREBASE API CONFIGURATION ---
-        const VITAL_API_URL = 'https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1.firebasedatabase.app/ambulance_vitals.json';
-        const LOGISTICS_NODE = 'patient_logistics';
-        const LOGISTICS_API_URL = 'https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1.firebasedatabase.app/' + LOGISTICS_NODE + '.json';
+        // *** ✅ FIREBASE CONFIGURATION COPIED FROM RECEPTION DASHBOARD ✅ ***
+        const firebaseConfig = {
+          apiKey: "AIzaSyAAUeebZlb07z-90q2noOiSQAZa99Q1RX0",
+          authDomain: "ambulance-monitoring-5ad1a.firebaseapp.com",
+          databaseURL: "https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1.firebasedatabase.app",
+          projectId: "ambulance-monitoring-5ad1a",
+          storageBucket: "ambulance-monitoring-5ad1a.appspot.com",
+          messagingSenderId: "83156963253",
+          appId: "1:83156963253:web:c73fb3f0e80afc9f8b93fc",
+          measurementId: "G-QVBTJZ5XY6"
+        };
 
-        const refreshRate = 500; // Update every 500ms (0.5 seconds)
+        // Initialize Firebase
+        const app = firebase.initializeApp(firebaseConfig);
+        const db = app.database();
+
+        // Reference to the root of the database for global operations
+        const dbRef = db.ref('/');
+        // Reference to the logistics node for assignment data
+        const logisticsRef = db.ref('logistics');
+        // Reference to the vitals node for writing/reading live data
+        const vitalsRef = db.ref('vitals');
+        // Reference to the patients node for registering new patients
+        const patientsRef = db.ref('patients');
+
+        const refreshRate = 500; // Vitals update interval
+        const refreshLogisticsRate = 2000; // Logistics fetch interval
+        let currentPatientId = null;
 
         // Element references
         const elements = {
@@ -223,74 +261,77 @@
             connectionIndicator: document.getElementById('connection-indicator'),
             statusText: document.getElementById('status-text'),
 
-            // Patient Info Elements
+            // Patient Info Elements (Inputs)
             patientIdValue: document.getElementById('patient-id-value'),
             nameInput: document.getElementById('patient-name-input'),
             ageInput: document.getElementById('patient-age-input'),
             genderInput: document.getElementById('patient-gender-input'),
 
-            // Logistics Elements
+            // Logistics Elements (Read-Only)
             docInput: document.getElementById('doc-input'),
             nurseInput: document.getElementById('nurse-input'),
             bedInput: document.getElementById('bed-input'),
             paramedicInput: document.getElementById('paramedic-input'),
             saveBtn: document.getElementById('save-logistics-btn'),
+            clearBtn: document.getElementById('clear-monitor-btn'),
             updateTime: document.getElementById('logistics-updated-time')
         };
 
-        // Helper function to generate a 6-digit Patient ID
-        function generatePatientId() {
-            return Math.floor(100000 + Math.random() * 900000).toString();
+        // Chart.js instances
+        let ecgChart, ppgChart, rrChart;
+
+        const chartColors = {
+            ecg: '#10b981',
+            ppg: '#3b82f6',
+            rr: '#f59e0b'
+        };
+
+        // --- UTILITY FUNCTIONS ---
+
+        async function generatePatientId() {
+            let id;
+            // Fetch all patient keys to ensure uniqueness
+            const snapshot = await patientsRef.once('value');
+            const existingPatients = snapshot.val() || {};
+            const existingIds = Object.keys(existingPatients);
+
+            do {
+                id = 'P' + Math.floor(100000 + Math.random() * 900000).toString();
+            } while (existingIds.includes(id));
+            return id;
         }
 
-        // Chart.js instances (unchanged)
-        let ecgChart, ppgChart, rrChart;
-        const chartColors = { ecg: '#10b981', ppg: '#3b82f6', rr: '#f59e0b' };
+        const formatValue = (value, decimals, defaultText = '--') => {
+            // Updated to handle both null/NaN and the literal '--' placeholder
+            if (value == null || isNaN(value) || value === '--') { return defaultText; }
+            return parseFloat(value).toFixed(decimals);
+        };
+        const formatTime = (isoString) => {
+            if (!isoString) return '--';
+            try { return new Date(isoString).toLocaleTimeString(); } catch { return '--'; }
+        }
 
-        // Initialize Charts (unchanged logic)
+        function updateStatusDisplay(status) {
+            elements.connectionIndicator.classList.remove('connected', 'buffering');
+            elements.statusText.textContent = 'Data Stream: ';
+            if (status === 'LIVE' || status === 'MONITORING') { elements.connectionIndicator.classList.add('connected'); elements.statusText.textContent = 'Monitoring';
+            } else if (status === 'BUFFERING') { elements.connectionIndicator.classList.add('buffering'); elements.statusText.textContent = 'Buffering...';
+            } else { elements.connectionIndicator.classList.remove('connected'); elements.statusText.textContent = 'Offline'; }
+        }
+
+        // Initialize Charts (Simplified placeholder for the full chart function)
         function initializeCharts(waveformTimes) {
             const chartOptions = (color) => ({
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: { duration: 0 },
-                parsing: false,
-                scales: {
-                    x: {
-                        type: 'linear',
-                        min: 0,
-                        max: waveformTimes.length > 0 ? waveformTimes[waveformTimes.length - 1] : 5,
-                        grid: { display: false },
-                        ticks: { display: false },
-                        border: { display: false }
-                    },
-                    y: {
-                        grid: { color: '#e5e7eb', lineWidth: 0.5 },
-                        ticks: { display: false },
-                        border: { display: false }
-                    }
-                },
-                plugins: {
-                    legend: { display: false },
-                    tooltip: { enabled: false },
-                    title: { display: false }
-                },
-                elements: { point: { radius: 0 } }
+                responsive: true, maintainAspectRatio: false, animation: { duration: 0 }, parsing: false,
+                scales: { x: { type: 'linear', min: 0, max: waveformTimes.length > 0 ? waveformTimes[waveformTimes.length - 1] : 5, grid: { display: false }, ticks: { display: false }, border: { display: false } },
+                          y: { grid: { color: '#e5e7eb', lineWidth: 0.5 }, ticks: { display: false }, border: { display: false } } },
+                plugins: { legend: { display: false }, tooltip: { enabled: false }, title: { display: false } }, elements: { point: { radius: 0 } }
             });
 
             const createChart = (ctxId, color) => {
                 const ctx = document.getElementById(ctxId).getContext('2d');
                 return new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: waveformTimes,
-                        datasets: [{
-                            data: [],
-                            borderColor: color,
-                            borderWidth: 2,
-                            tension: 0.1,
-                            fill: false
-                        }]
-                    },
+                    type: 'line', data: { labels: waveformTimes, datasets: [{ data: [], borderColor: color, borderWidth: 2, tension: 0.1, fill: false }] },
                     options: chartOptions(color)
                 });
             };
@@ -300,178 +341,280 @@
             rrChart = createChart('rrChart', chartColors.rr);
         }
 
-        const formatValue = (value, decimals, defaultText = '--') => {
-            if (value == null || value === 0.0 || isNaN(value)) {
-                return defaultText;
-            }
-            return value.toFixed(decimals);
-        };
 
-        const formatTime = (isoString) => {
-            if (!isoString) return '--';
-            try {
-                return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            } catch {
-                return '--';
-            }
-        }
-
-        function updateStatusDisplay(status) {
-            elements.connectionIndicator.classList.remove('connected', 'buffering');
-            elements.statusText.textContent = 'Data Stream: ';
-
-            if (status === 'MONITORING') {
-                elements.connectionIndicator.classList.add('connected');
-                elements.statusText.textContent = 'Monitoring';
-            } else if (status === 'BUFFERING') {
-                elements.connectionIndicator.classList.add('buffering');
-                elements.statusText.textContent = 'Buffering...';
-            } else {
-                elements.connectionIndicator.classList.remove('connected');
-                elements.statusText.textContent = 'Error/Offline';
-            }
-        }
-
-        // --- LOGISTICS READ/WRITE FUNCTIONS (MODIFIED) ---
+        // --- CORE LOGISTICS/REGISTRATION FUNCTIONS (Reads from Firebase /logistics) ---
 
         async function fetchLogistics() {
-            try {
-                const response = await fetch(LOGISTICS_API_URL);
-                const logistics = await response.json();
+            const snapshot = await logisticsRef.once('value');
+            const logistics = snapshot.val();
+            // Check if bed/room assignment has been made by checking if 'bed' is present AND not the default '--'
+            const isAssigned = logistics && logistics.bed && logistics.bed !== '--';
 
-                if (logistics) {
-                    // 1. Populate Patient ID and Info
-                    elements.patientIdValue.textContent = logistics.patient_id || generatePatientId();
-                    elements.nameInput.value = logistics.patient_name || '';
-                    elements.ageInput.value = logistics.patient_age || '';
-                    elements.genderInput.value = logistics.patient_gender || 'M';
+            // --- 1. HANDLE ALLOTMENT DATA (FROM RECEPTION) ---
+            if (logistics && logistics.patient_id && logistics.patient_id !== '--') {
+                currentPatientId = logistics.patient_id;
 
-                    // 2. Populate Logistics
-                    elements.docInput.value = logistics.doctor || '';
-                    elements.nurseInput.value = logistics.nurse || '';
-                    elements.bedInput.value = logistics.bed || '';
-                    elements.paramedicInput.value = logistics.paramedic || '';
+                // Read-only assignment fields (Updated by Reception Dashboard)
+                elements.docInput.value = logistics.doctor || 'N/A';
+                elements.nurseInput.value = logistics.nurse || 'N/A';
+                elements.paramedicInput.value = logistics.paramedic || 'N/A';
 
-                    // 3. Update Time
-                    const time = formatTime(logistics.updated_at);
-                    elements.updateTime.textContent = `Last updated: ${time}`;
+                // ⭐ BED/ROOM DISPLAY LOGIC FIX
+                if (isAssigned) {
+                    elements.bedInput.value = logistics.bed;
+                    elements.bedInput.placeholder = 'Assigned';
                 } else {
-                    // If the node is empty, generate an ID for the first save
-                    elements.patientIdValue.textContent = generatePatientId();
+                    elements.bedInput.value = ''; // Clear value if unassigned
+                    // Display the desired message when assignment is pending
+                    elements.bedInput.placeholder = 'Awaiting Assignment...';
                 }
-            } catch (error) {
-                console.error("Failed to fetch logistics data:", error);
+
+                // Demographic fields (Read from logistics)
+                elements.patientIdValue.textContent = logistics.patient_id;
+                elements.nameInput.value = logistics.patient_name || '';
+                elements.ageInput.value = logistics.patient_age || '';
+                elements.genderInput.value = logistics.patient_gender || 'M';
+
+                const time = formatTime(logistics.updated_at);
+                elements.updateTime.textContent = `Last synced: ${time}`;
+
+                // Lock demographics if assigned to a bed/room by Reception
+                elements.nameInput.disabled = isAssigned;
+                elements.ageInput.disabled = isAssigned;
+                elements.genderInput.disabled = isAssigned;
+
+                // Disable save if assignment is confirmed by reception
+                elements.saveBtn.textContent = isAssigned ? 'Assignment Confirmed' : 'Update Demographics';
+                elements.saveBtn.disabled = isAssigned;
+
+            } else {
+                 // --- 2. HANDLE NEW REGISTRATION (AMBULANCE SIDE) ---
+                if (!currentPatientId) {
+                    currentPatientId = await generatePatientId();
+                    elements.patientIdValue.textContent = currentPatientId;
+                }
+                // Unlock demographics and enable save button
+                elements.nameInput.disabled = false;
+                elements.ageInput.disabled = false;
+                elements.genderInput.disabled = false;
+                elements.saveBtn.textContent = 'Register Patient';
+                elements.saveBtn.disabled = false;
+
+                // Clear assignment fields
+                elements.docInput.value = elements.nurseInput.value = elements.bedInput.value = elements.paramedicInput.value = 'N/A';
+                elements.bedInput.value = '';
+                elements.bedInput.placeholder = 'Awaiting Assignment...';
+
+                elements.updateTime.textContent = `Last synced: --`;
             }
         }
 
+        // --- CORE LOGISTICS/REGISTRATION FUNCTIONS (Writes to Firebase /patients and /logistics) ---
         async function saveLogistics() {
             elements.saveBtn.disabled = true;
-            elements.saveBtn.textContent = 'Saving...';
+            elements.saveBtn.textContent = 'Processing...';
 
-            // Use the displayed PID, which is either loaded from Firebase or freshly generated
-            const currentPid = elements.patientIdValue.textContent.trim();
+            const pId = elements.patientIdValue.textContent;
+            const pName = elements.nameInput.value.trim();
+            const pAge = elements.ageInput.value.trim();
+            const pGender = elements.genderInput.value;
 
-            const logisticsData = {
-                // Patient Info
-                patient_id: currentPid,
-                patient_name: elements.nameInput.value || 'Unknown',
-                patient_age: elements.ageInput.value || 'N/A',
-                patient_gender: elements.genderInput.value || 'M',
+            if (!pName || !pAge) {
+                console.error("Please enter patient name and age.");
+                alert("Please enter patient name and age.");
+                elements.saveBtn.textContent = 'Register/Update Patient';
+                elements.saveBtn.disabled = false;
+                return;
+            }
 
-                // Assignment Logistics
-                doctor: elements.docInput.value || 'N/A',
-                nurse: elements.nurseInput.value || 'N/A',
-                bed: elements.bedInput.value || 'N/A',
-                paramedic: elements.paramedicInput.value || 'N/A',
+            try {
+                // Fetch the current patient data and logistics data
+                const patientSnapshot = await patientsRef.child(pId).once('value');
+                const currentPatient = patientSnapshot.val() || {};
+
+                const logisticsSnapshot = await logisticsRef.once('value');
+                const currentLogistics = logisticsSnapshot.val() || {};
+
+
+                // 1. Update/Register patient in the Reception's patient list
+                const patientDataToSave = {
+                    ...currentPatient,
+                    id: pId,
+                    name: pName,
+                    age: parseInt(pAge),
+                    gender: pGender,
+                    condition: currentPatient.condition || 'Ambulatory Monitoring',
+                    is_active: currentPatient.is_active !== false,
+                    registration_time: currentPatient.registration_time || new Date().toISOString(),
+                    current_room: currentPatient.current_room || '',
+                    assigned_doctor_id: currentPatient.assigned_doctor_id || '',
+                    assigned_nurse_id: currentPatient.assigned_nurse_id || ''
+                };
+
+                // 2. Update the logistics node
+                const logisticsDataToSave = {
+                    ...currentLogistics,
+                    patient_id: pId,
+                    patient_name: pName,
+                    patient_age: pAge,
+                    patient_gender: pGender,
+                    // Preserve assignment details from Reception if they exist
+                    doctor: currentLogistics.doctor || '--',
+                    nurse: currentLogistics.nurse || '--',
+                    paramedic: currentLogistics.paramedic || '--',
+                    bed: currentLogistics.bed || '--',
+                    updated_at: new Date().toISOString()
+                };
+
+                // Batch update the patients and logistics nodes
+                const updates = {};
+                updates[`patients/${pId}`] = patientDataToSave;
+                updates[`logistics`] = logisticsDataToSave; // Logistics is a single, global node
+
+                await dbRef.update(updates);
+
+                console.log(`Patient ${pName} (${pId}) registered/updated in system for reception.`);
+                await fetchLogistics(); // Refresh monitor display
+            } catch (error) {
+                console.error("Error saving logistics:", error);
+                alert("Registration failed. Check console.");
+            } finally {
+                // Status will be handled by fetchLogistics
+            }
+        }
+
+        // --- NEW: Function to clear the monitor stream ---
+        async function clearMonitorStream() {
+            if (!currentPatientId) return;
+
+             // Reset the shared logistics node to empty state
+            const initialLogistics = {
+                patient_id: '--',
+                patient_name: '--',
+                patient_age: '--',
+                patient_gender: '--',
+                doctor: '--',
+                nurse: '--',
+                paramedic: '--',
+                bed: '--',
                 updated_at: new Date().toISOString()
             };
 
-            try {
-                const response = await fetch(LOGISTICS_API_URL, {
-                    method: 'PUT', // PUT overwrites the entire node
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(logisticsData)
-                });
+            // Also reset the vitals status to offline
+            const vitalsReset = { status: 'OFFLINE' };
 
-                if (response.ok) {
-                    console.log("Logistics successfully updated.");
-                } else {
-                    console.error("Failed to save logistics:", response.status);
-                }
-            } catch (error) {
-                console.error("Network error saving logistics:", error);
-            } finally {
-                elements.saveBtn.textContent = 'Update Logistics';
-                elements.saveBtn.disabled = false;
-                fetchLogistics(); // Refresh local display time immediately
-            }
+
+            // Batch update logistics and vitals
+            const updates = {};
+            updates['logistics'] = initialLogistics;
+            updates['vitals'] = vitalsReset;
+
+            await dbRef.update(updates);
+
+            // Clear local monitor ID and refresh display
+            currentPatientId = null;
+            await fetchLogistics();
+            updateStatusDisplay('OFFLINE');
+
+            // ⭐ FIX: Clear Patient Demographics from input fields
+            elements.nameInput.value = '';
+            elements.ageInput.value = '';
+            elements.genderInput.value = 'M'; // Reset gender dropdown to default Male
+
+            console.log("Monitor stream cleared and logistics reset.");
+            alert("Monitor stream cleared. Ready for new patient registration.");
         }
 
-        // --- VITAL SIGNS FETCH FUNCTION (UNCHANGED) ---
+
+        // --- VITAL SIGNS FETCH/WRITE FUNCTION (NO SIMULATION) ---
         async function fetchAndUpdateData() {
+            // FIX: Removed all simulated vital sign and waveform generation logic.
+
+            const status = currentPatientId ? 'LIVE' : 'OFFLINE';
+
+            // Placeholder structure for safety, expecting ESP32 to fill in the rest
+            const vitalsData = {
+                status: status,
+                hr: '--',
+                spo2: '--',
+                rr: '--',
+                temp: '--',
+                hrv: '--',
+                waveform_times: [],
+                ecg_waveform: [],
+                ppg_waveform: [],
+                rr_waveform: []
+            };
+
             try {
-                const response = await fetch(VITAL_API_URL, {
-                    headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
-                });
-
-                if (!response.ok) {
-                    throw new Error(`Firebase returned non-OK status: ${response.status}`);
+                // 1. WRITE only the status to Firebase if a patient is active.
+                if (currentPatientId) {
+                    await vitalsRef.update({ status: status });
+                } else {
+                    await vitalsRef.update({ status: 'OFFLINE' });
                 }
 
-                const data = await response.json();
+                // 2. READ the actual vitals data written by the ESP32
+                const snapshot = await vitalsRef.once('value');
+                const liveVitalsData = snapshot.val() || vitalsData;
 
-                if (!data) {
-                    throw new Error('No data received from sender node.');
+                // 3. VITAL SIGNS ASSIGNMENT
+                elements.hr.textContent = formatValue(liveVitalsData.hr, 1);
+                elements.hrv.textContent = formatValue(liveVitalsData.hrv, 2);
+                elements.rr.textContent = formatValue(liveVitalsData.rr, 2);
+                elements.spo2.textContent = formatValue(liveVitalsData.spo2, 1);
+                elements.temp.textContent = formatValue(liveVitalsData.temp, 2);
+
+                // 4. CHART UPDATE LOGIC (Using liveVitalsData)
+                if (!ecgChart && liveVitalsData.waveform_times && liveVitalsData.waveform_times.length > 0) {
+                    initializeCharts(liveVitalsData.waveform_times);
                 }
 
-                if (!ecgChart && data.waveform_times && data.waveform_times.length > 0) {
-                    initializeCharts(data.waveform_times);
+                if (ecgChart && liveVitalsData.ecg_waveform) {
+                     const ecgData = liveVitalsData.ecg_waveform.map((val, i) => ({ x: liveVitalsData.waveform_times[i], y: val }));
+                     ecgChart.data.datasets[0].data = ecgData;
+                     ecgChart.update('none');
+                }
+                if (ppgChart && liveVitalsData.ppg_waveform) {
+                     const ppgData = liveVitalsData.ppg_waveform.map((val, i) => ({ x: liveVitalsData.waveform_times[i], y: val }));
+                     ppgChart.data.datasets[0].data = ppgData;
+                     ppgChart.update('none');
+                }
+                if (rrChart && liveVitalsData.rr_waveform) {
+                     const rrData = liveVitalsData.rr_waveform.map((val, i) => ({ x: liveVitalsData.waveform_times[i], y: val }));
+                     rrChart.data.datasets[0].data = rrData;
+                     rrChart.update('none');
                 }
 
-                // 2. VITAL SIGNS ASSIGNMENT
-                elements.hr.textContent = formatValue(data.hr, 1);
-                elements.hrv.textContent = formatValue(data.hrv, 2);
-                elements.rr.textContent = formatValue(data.rr, 2);
-                elements.spo2.textContent = formatValue(data.spo2, 1);
-                elements.temp.textContent = formatValue(data.temp, 2);
-
-                // 3. CHART UPDATE LOGIC
-                if (ecgChart && data.ecg_waveform) {
-                    const ecgData = data.ecg_waveform.map((val, i) => ({ x: data.waveform_times[i], y: val }));
-                    ecgChart.data.datasets[0].data = ecgData;
-                    ecgChart.update();
-                }
-                if (ppgChart && data.ppg_waveform) {
-                    const ppgData = data.ppg_waveform.map((val, i) => ({ x: data.waveform_times[i], y: val }));
-                    ppgChart.data.datasets[0].data = ppgData;
-                    ppgChart.update();
-                }
-                if (rrChart && data.rr_waveform) {
-                    const rrData = data.rr_waveform.map((val, i) => ({ x: data.waveform_times[i], y: val }));
-                    rrChart.data.datasets[0].data = rrData;
-                    rrChart.update();
-                }
-
-                updateStatusDisplay(data.status);
+                // 5. Update Connection Status
+                updateStatusDisplay(liveVitalsData.status);
 
             } catch (error) {
-                console.error('Data stream interrupted or assignment failed:', error);
+                console.error('Data stream interrupted:', error);
+                // Clear values and set status to error/offline
                 elements.hr.textContent = elements.hrv.textContent = elements.rr.textContent = elements.spo2.textContent = elements.temp.textContent = '--';
-                updateStatusDisplay('ERROR');
+                updateStatusDisplay('OFFLINE');
 
             } finally {
+                // Ensure the next fetch happens regardless of success/failure
                 setTimeout(fetchAndUpdateData, refreshRate);
             }
         }
 
         // --- AUTORUN LOGIC ---
         document.addEventListener('DOMContentLoaded', () => {
+            // Attach event listener for the save button
             elements.saveBtn.addEventListener('click', saveLogistics);
+            // Attach listener for the clear button
+            elements.clearBtn.addEventListener('click', clearMonitorStream);
 
-            // Start reading logistics immediately to populate fields and get/generate Patient ID
+            // Start reading logistics periodically
+            setInterval(fetchLogistics, refreshLogisticsRate);
+
+            // Start initial read immediately
             fetchLogistics();
 
-            // Start reading vitals continuously
+            // Start continuous fetching/writing of vitals
             updateStatusDisplay('INITIALIZING');
             setTimeout(fetchAndUpdateData, 500);
         });
