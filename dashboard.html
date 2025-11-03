@@ -348,45 +348,67 @@
         function startLogisticsListener() {
             logisticsRef.on('value', async (snapshot) => {
                 const logistics = snapshot.val();
+                // Check if reception has assigned a room (bed is the key indicator)
                 const isAssigned = logistics && logistics.bed && logistics.bed !== '--';
 
+                // Get current patient info (the one that registered)
+                const registeredPatientId = elements.patientIdValue.textContent;
+
+
                 if (logistics && logistics.patient_id && logistics.patient_id !== '--') {
-                    // --- 1. HANDLE ALLOTMENT DATA (FROM RECEPTION) ---
-                    currentPatientId = logistics.patient_id;
+                    // --- 1. HANDLING LOGISTICS DATA (Registration or Assignment) ---
 
-                    // Read-only assignment fields
-                    elements.docInput.value = logistics.doctor || 'N/A';
-                    elements.nurseInput.value = logistics.nurse || 'N/A';
-                    elements.paramedicInput.value = logistics.paramedic || 'N/A';
+                    // If the patient ID in logistics matches the one currently registered on this monitor:
+                    if (logistics.patient_id === registeredPatientId) {
+                        currentPatientId = logistics.patient_id;
 
-                    if (isAssigned) {
-                        elements.bedInput.value = logistics.bed;
-                        elements.bedInput.placeholder = 'Assigned';
+                        // Read-only assignment fields
+                        elements.docInput.value = logistics.doctor || 'N/A';
+                        elements.nurseInput.value = logistics.nurse || 'N/A';
+                        elements.paramedicInput.value = logistics.paramedic || 'N/A';
+
+                        if (isAssigned) {
+                            elements.bedInput.value = logistics.bed;
+                            elements.bedInput.placeholder = 'Assigned';
+                            elements.bedInput.classList.remove('text-red-600');
+                            elements.bedInput.classList.add('text-green-600');
+                        } else {
+                            elements.bedInput.value = '';
+                            elements.bedInput.placeholder = 'Awaiting Assignment...';
+                            elements.bedInput.classList.remove('text-green-600');
+                            elements.bedInput.classList.add('text-red-600');
+                        }
+
+                        // Demographic fields (Read from logistics)
+                        elements.patientIdValue.textContent = logistics.patient_id;
+                        elements.nameInput.value = logistics.patient_name || '';
+                        elements.ageInput.value = logistics.patient_age || '';
+                        elements.genderInput.value = logistics.patient_gender || 'M';
+
+                        const time = formatTime(logistics.updated_at);
+                        elements.updateTime.textContent = `Last synced: ${time}`;
+
+                        // Lock demographics and disable save if assignment is confirmed by reception
+                        elements.nameInput.disabled = isAssigned;
+                        elements.ageInput.disabled = isAssigned;
+                        elements.genderInput.disabled = isAssigned;
+
+                        elements.saveBtn.textContent = isAssigned ? 'Assignment Confirmed' : 'Update Demographics';
+                        elements.saveBtn.disabled = isAssigned;
+
                     } else {
-                        elements.bedInput.value = '';
-                        elements.bedInput.placeholder = 'Awaiting Assignment...';
+                        // --- 2. LOGISTICS PATIENT ID MISMATCH ---
+                        // This means the logistics node has been updated with a *different* patient ID.
+                        // This usually only happens if the logistics node was manually overwritten.
+                        // We will ignore the assignment data but keep the current patient's ID.
+                        console.warn(`Logistics ID (${logistics.patient_id}) does not match Monitor ID (${registeredPatientId}). Ignoring assignment data for now.`);
+                        // The existing currentPatientId and display state is maintained by the outer else block logic or the current state.
                     }
 
-                    // Demographic fields (Read from logistics)
-                    elements.patientIdValue.textContent = logistics.patient_id;
-                    elements.nameInput.value = logistics.patient_name || '';
-                    elements.ageInput.value = logistics.patient_age || '';
-                    elements.genderInput.value = logistics.patient_gender || 'M';
-
-                    const time = formatTime(logistics.updated_at);
-                    elements.updateTime.textContent = `Last synced: ${time}`;
-
-                    // Lock demographics and disable save if assignment is confirmed by reception
-                    elements.nameInput.disabled = isAssigned;
-                    elements.ageInput.disabled = isAssigned;
-                    elements.genderInput.disabled = isAssigned;
-
-                    elements.saveBtn.textContent = isAssigned ? 'Assignment Confirmed' : 'Update Demographics';
-                    elements.saveBtn.disabled = isAssigned;
 
                 } else {
-                    // --- 2. HANDLE MONITOR RESET / NO PATIENT ---
-                    if (!currentPatientId) {
+                    // --- 3. HANDLE MONITOR RESET / NO ACTIVE PATIENT IN LOGISTICS ---
+                    if (!currentPatientId || currentPatientId === '--') {
                         currentPatientId = await generatePatientId();
                         elements.patientIdValue.textContent = currentPatientId;
                     }
@@ -402,6 +424,9 @@
                     elements.docInput.value = elements.nurseInput.value = elements.paramedicInput.value = 'N/A';
                     elements.bedInput.value = '';
                     elements.bedInput.placeholder = 'Awaiting Assignment...';
+                    elements.bedInput.classList.remove('text-green-600');
+                    elements.bedInput.classList.add('text-red-600');
+
 
                     elements.updateTime.textContent = `Last synced: --`;
                 }
@@ -454,17 +479,27 @@
                 };
 
                 // 2. Update the active logistics node (/logistics)
+                // CRITICAL FIX: Only overwrite the core patient demographics and set bed back to '--'
+                // IF the patient ID is changing or the bed was previously set.
+                let doctor = currentLogistics.doctor || '--';
+                let nurse = currentLogistics.nurse || '--';
+                let paramedic = currentLogistics.paramedic || '--';
+                let bed = currentLogistics.bed || '--';
+
+                // If we are registering a *new* patient, we must reset the assignment details
+                if (currentLogistics.patient_id !== pId || bed !== '--') {
+                    doctor = nurse = paramedic = bed = '--';
+                }
+
                 const logisticsDataToSave = {
-                    ...currentLogistics,
                     patient_id: pId,
                     patient_name: pName,
                     patient_age: pAge,
                     patient_gender: pGender,
-                    // Preserve assignment details if Reception set them
-                    doctor: currentLogistics.doctor || '--',
-                    nurse: currentLogistics.nurse || '--',
-                    paramedic: currentLogistics.paramedic || '--',
-                    bed: currentLogistics.bed || '--',
+                    doctor: doctor,
+                    nurse: nurse,
+                    paramedic: paramedic,
+                    bed: bed,
                     updated_at: new Date().toISOString()
                 };
 
@@ -476,7 +511,7 @@
                 await dbRef.update(updates);
 
                 console.log(`Patient ${pName} (${pId}) registered/updated in system for reception.`);
-                alert(`Patient ${pName} (${pId}) registered/updated.`);
+                alert(`Patient ${pName} (${pId}) registered/updated. Reception will now process the assignment.`);
 
             } catch (error) {
                 console.error("Error saving logistics:", error);
@@ -488,11 +523,13 @@
 
         // --- NEW: Function to clear the monitor stream ---
         async function clearMonitorStream() {
-            if (!currentPatientId) {
+            if (!currentPatientId || currentPatientId === '--') {
                 alert("Monitor is already cleared or no patient is registered.");
                 return;
             }
 
+            // IMPORTANT: If the patient was ASSIGNED by reception (bed !== '--'), clearing the monitor here
+            // does NOT discharge them from the ER. It only frees the monitor for the next patient.
             const confirmClear = confirm("Are you sure you want to clear the monitor stream? This action prepares the monitor for a NEW patient and resets the logistics link.");
             if (!confirmClear) return;
 
@@ -530,6 +567,8 @@
             elements.genderInput.value = 'M';
 
             console.log("Monitor stream cleared and logistics reset.");
+            // Force the listener to run once to generate a new P-ID immediately
+            logisticsRef.once('value');
             alert("Monitor stream cleared. Ready for new patient registration.");
         }
 
@@ -562,6 +601,7 @@
                 elements.temp.textContent = formatValue(data.temp, 2);
 
                 // 4. CHART UPDATE LOGIC
+                // NOTE: The waveform arrays (ecg_waveform, etc.) should be written by the Python script.
                 if (!ecgChart && data.waveform_times && data.waveform_times.length > 0) {
                     initializeCharts(data.waveform_times);
                 }
@@ -600,11 +640,19 @@
             elements.saveBtn.addEventListener('click', saveLogistics);
             elements.clearBtn.addEventListener('click', clearMonitorStream);
 
+            // Generate initial ID for the first run if the logistics node is empty.
+            if (!currentPatientId) {
+                 generatePatientId().then(id => {
+                    elements.patientIdValue.textContent = id;
+                    currentPatientId = id;
+                 });
+            }
+
+
             // 1. Start real-time listener for Logistics/Assignment data
             startLogisticsListener();
 
             // 2. Start initial patient ID generation and continuous vitals loop
-            // The logic inside startLogisticsListener handles initial ID generation.
             setTimeout(fetchAndUpdateData, 500);
         });
     </script>
