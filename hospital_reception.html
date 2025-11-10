@@ -242,21 +242,15 @@
                 er_rooms: {
                     critical: [
                         { id: 'TB1', type: 'Trauma Bay', triage: 'critical', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
-                        { id: 'TB2', type: 'Trauma Bay', triage: 'critical', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
-                        { id: 'TB3', type: 'Trauma Bay 3', triage: 'critical', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
-                        { id: 'TB4', type: 'Trauma Bay 4', triage: 'critical', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' }
+                        { id: 'TB2', type: 'Trauma Bay', triage: 'critical', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' }
                     ],
                     urgent: [
                         { id: 'RBA', type: 'Resus Bed A', triage: 'urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
-                        { id: 'RBB', type: 'Resus Bed B', triage: 'urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
-                        { id: 'RBC', type: 'Resus Bed C', triage: 'urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
-                        { id: 'RBD', type: 'Resus Bed D', triage: 'urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' }
+                        { id: 'RBB', type: 'Resus Bed B', triage: 'urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' }
                     ],
                     less_urgent: [
                         { id: 'MSR', type: 'Minor Suture Rm', triage: 'less_urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
-                        { id: 'OB1', type: 'Observation Bed 1', triage: 'less_urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
-                        { id: 'OB2', type: 'Observation Bed 2', triage: 'less_urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
-                        { id: 'PROC', type: 'Procedure Room', triage: 'less_urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' }
+                        { id: 'OB1', type: 'Observation Bed 1', triage: 'less_urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' }
                     ]
                 },
                 logistics: {
@@ -662,6 +656,14 @@
             // NEW: ETA Element
             const etaEl = document.getElementById('eta-reception-value');
 
+            // REMOVED: EPCR Elements (Now only used for logistics check, not rendering)
+            /*
+            const epcrMoiEl = document.getElementById('epcr-moi');
+            const epcrAssessmentEl = document.getElementById('epcr-assessment');
+            const epcrNotesEl = document.getElementById('epcr-notes');
+            */
+
+
             // Check: If data is null OR if the data doesn't belong to the currently selected patient
             if (!data || !currentPatientId || data.patient_id !== currentPatientId) {
                  hrValueEl.textContent = '--';
@@ -682,6 +684,14 @@
                  etaEl.textContent = '--';
                  etaEl.classList.remove('text-green-700');
                  etaEl.classList.add('text-blue-700');
+
+                 // REMOVED EPCR RENDERING LOGIC
+                 /*
+                 epcrMoiEl.innerHTML = `<span class="font-medium text-gray-600">Mech. of Injury:</span> <span class="font-bold text-red-600">--</span>`;
+                 epcrAssessmentEl.innerHTML = `<span class="font-medium text-gray-600">Initial Assessment:</span> --`;
+                 epcrNotesEl.innerHTML = `<span class="font-medium text-gray-600">EMT Notes:</span> --`;
+                 */
+
 
                  document.getElementById('active-patient-id').textContent = '(Vitals Offline)'; // Reset to generic message
                  return;
@@ -714,6 +724,25 @@
             }
             etaEl.textContent = etaDisplay;
             // --- END NEW: ETA Logic ---
+
+            // --- REMOVED: EPCR RENDERING LOGIC ---
+            /*
+            if (logisticsData.patient_id === currentPatientId) {
+                const moi = logisticsData.moi || '--';
+                const assessment = logisticsData.initial_assessment || '--';
+                const notes = logisticsData.emt_notes || '--';
+
+                epcrMoiEl.innerHTML = `<span class="font-medium text-gray-600">Mech. of Injury:</span> <span class="font-bold text-red-600">${moi}</span>`;
+                epcrAssessmentEl.innerHTML = `<span class="font-medium text-gray-600">Initial Assessment:</span> ${assessment}`;
+                epcrNotesEl.innerHTML = `<span class="font-medium text-gray-600">EMT Notes:</span> ${notes}`;
+            } else {
+                 epcrMoiEl.innerHTML = `<span class="font-medium text-gray-600">Mech. of Injury:</span> <span class="font-bold text-red-600">--</span>`;
+                 epcrAssessmentEl.innerHTML = `<span class="font-medium text-gray-600">Initial Assessment:</span> --`;
+                 epcrNotesEl.innerHTML = `<span class="font-medium text-gray-600">EMT Notes:</span> --`;
+            }
+            */
+            // --- END REMOVED: EPCR Logic ---
+
 
             // Check for PDS score and color
             const pds_color = data.pds_color ? data.pds_color.toLowerCase() : 'gray';
@@ -850,6 +879,28 @@
                 doc.line(10, yPos, 200, yPos); // Horizontal line
                 yPos += 4;
 
+                // --- REMOVED: EPCR/Initial Assessment from PDF ---
+                /*
+                doc.setFontSize(12);
+                doc.text("Initial Assessment (EMT Report)", 10, yPos);
+                yPos += 5;
+
+                const epcrMoi = logisticsData.moi || 'Not recorded';
+                const epcrAssessment = logisticsData.initial_assessment || 'Not recorded';
+                const epcrNotes = logisticsData.emt_notes || 'Not recorded';
+
+                doc.setFontSize(9);
+                doc.text(`Mechanism of Injury (MOI): ${epcrMoi}`, 10, yPos);
+                yPos += 4;
+                doc.text(`Initial Assessment: ${epcrAssessment}`, 10, yPos);
+                yPos += 4;
+                doc.text(`EMT Notes: ${epcrNotes}`, 10, yPos);
+                yPos += 6;
+                doc.line(10, yPos, 200, yPos); // Horizontal line
+                yPos += 4;
+                */
+                // --- END REMOVAL ---
+
                 // --- Vitals Table ---
                 doc.setFontSize(12);
                 doc.text("Ambulatory Vitals History", 10, yPos);
@@ -901,7 +952,7 @@
             }
 
             const typeKey = type + 's';
-            const existingIds = Object.keys(allPatientsData[typeKey] || {});
+            const existingIds = Object.keys(allStaffData[typeKey] || {});
 
             if (!id) {
                 id = generateStaffId(type, existingIds);
@@ -1179,7 +1230,7 @@ async function autoAssignPatient(patientId) {
 
                 // B. Free up Staff
                 const staffUpdate = { status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' };
-                if (paramedicId) updates[`staff/paramedics/${paramedicId}`] = {...allStaffData.paramedics[paramedicId], ...staffUpdate};
+                if (paramedicId) updates[`staff/paramedics/${paramedicId}`] = {...allStaffData.paramedics[paramamedicId], ...staffUpdate};
                 if (doctorId) updates[`staff/doctors/${doctorId}`] = {...allStaffData.doctors[doctorId], ...staffUpdate};
                 if (nurseId) updates[`staff/nurses/${nurseId}`] = {...allStaffData.nurses[nurseId], ...staffUpdate};
 
