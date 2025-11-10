@@ -8,7 +8,6 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js"></script>
 
-    <!-- FIREBASE SDK v9 COMPATIBILITY IMPORTS -->
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
 
@@ -32,6 +31,7 @@
             justify-content: center;
             align-items: center;
             height: 100%;
+            transition: background-color 0.3s; /* Added for PDS color transition */
         }
         .metric-label {
             font-size: 0.8rem;
@@ -62,6 +62,13 @@
         .value-temp { color: #ef4444; }
         .value-hrv { color: #8b5cf6; }
 
+        /* PDS COLORS */
+        .pds-red { background-color: #fee2e2; border-color: #f87171; } /* Red-100 */
+        .pds-yellow { background-color: #fffbe2; border-color: #facc15; } /* Yellow-100 */
+        .pds-green { background-color: #e6ffed; border-color: #34d399; } /* Green-100 */
+        .pds-gray { background-color: #ffffff; border-color: #e5e7eb; } /* Default */
+
+
         /* CHART BORDER COLORS */
         .chart-ecg { border-left: 5px solid #10b981; }
         .chart-ppg { border-left: 5px solid #3b82f6; }
@@ -81,10 +88,11 @@
             background-color: #f59e0b; /* Amber */
         }
 
+        /* UPDATED GRID for 5 remaining metrics */
         .vital-grid {
             display: grid;
             grid-template-columns: 1fr;
-            grid-template-rows: repeat(5, minmax(0, 1fr));
+            grid-template-rows: repeat(5, minmax(0, 1fr)); /* 5 rows now */
             gap: 0.4rem;
             height: 100%;
         }
@@ -96,6 +104,22 @@
             font-size: 0.875rem;
             color: #1f2937;
         }
+
+        /* New PDS Header Styling */
+        #pds-header-card {
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            transition: background-color 0.3s;
+        }
+        #pds-header-card .metric-value {
+            font-size: 1.5rem;
+        }
+        #pds-header-card .metric-label {
+            font-size: 0.7rem;
+            line-height: 1;
+        }
     </style>
 </head>
 <body class="flex flex-col h-screen p-4">
@@ -105,9 +129,28 @@
         <div class="flex items-center gap-4">
             <h1 class="text-xl font-bold">Ambulatory Monitor </h1>
 
+            <div id="pds-header-card" class="flex items-center gap-2 pds-gray">
+                <div class="text-center">
+                    <p class="metric-label font-bold text-gray-700">PDS Score</p>
+                    <p class="metric-value" id="pds-score-value">--</p>
+                </div>
+                <div class="text-xs text-center">
+                    <p class="font-bold text-gray-700">Risk Level:</p>
+                    <p id="pds-classification-value" class="text-gray-500 font-semibold">N/A</p>
+                </div>
+            </div>
         </div>
 
-        <div class="flex items-center gap-">
+        <div class="flex items-center gap-4">
+            <!-- NEW: ETA Display -->
+            <div class="text-base font-semibold text-right">
+                <p class="text-sm font-normal text-gray-500">
+                    <span class="font-semibold text-gray-700">ETA:</span>
+                    <span id="eta-value" class="font-bold text-blue-700">--</span>
+                </p>
+            </div>
+            <!-- End NEW: ETA Display -->
+
              <div class="text-base font-semibold text-right">
                  <p>Patient ID: <span id="patient-id-value" class="font-bold text-gray-900">--</span></p>
                 <div class="flex gap-2 justify-end text-sm mt-1">
@@ -188,6 +231,7 @@
         <div class="flex flex-col w-1/4 gap-3">
 
             <div class="vital-grid flex-1">
+
                 <div class="metric-card">
                     <p class="metric-label">HR</p>
                     <p class="metric-value value-hr" id="hr-value">--</p>
@@ -249,15 +293,29 @@
         const refreshRate = 500; // Vitals polling interval (kept for Chart.js updates)
         let currentPatientId = null;
 
-        // Element references
+        // *** NEW: ETA countdown logic variables ***
+        let etaInterval = null;
+        let currentEtaMinutes = null;
+
+        // Element references (UPDATED TO REFLECT HEADER LOCATION)
         const elements = {
             hr: document.getElementById('hr-value'),
             hrv: document.getElementById('hrv-value'),
             rr: document.getElementById('rr-value'),
             spo2: document.getElementById('spo2-value'),
             temp: document.getElementById('temp-value'),
+
+            // NEW PDS Elements (Referencing the new header IDs)
+            pdsScore: document.getElementById('pds-score-value'),
+            pdsClassification: document.getElementById('pds-classification-value'),
+            pdsCard: document.getElementById('pds-header-card'), // Changed ID
+            // END NEW PDS Elements
+
             connectionIndicator: document.getElementById('connection-indicator'),
             statusText: document.getElementById('status-text'),
+
+            // ETA Element
+            etaValue: document.getElementById('eta-value'), // New reference
 
             // Patient Info Elements (Inputs)
             patientIdValue: document.getElementById('patient-id-value'),
@@ -307,6 +365,39 @@
             try { return new Date(isoString).toLocaleTimeString(); } catch { return '--'; }
         }
 
+        function updatePdsCardColor(color) {
+            const card = elements.pdsCard;
+            const classificationEl = elements.pdsClassification;
+            card.classList.remove('pds-red', 'pds-yellow', 'pds-green', 'pds-gray');
+
+            const lowerColor = color ? color.toLowerCase() : 'gray';
+
+            // Remove existing text color classes for clean transition
+            classificationEl.classList.remove('text-red-700', 'text-yellow-700', 'text-green-700', 'text-gray-500', 'font-bold');
+            // Reset PDS score value color (optional, but good practice)
+            elements.pdsScore.classList.remove('text-red-700', 'text-yellow-700', 'text-green-700', 'text-gray-700');
+
+
+            if (lowerColor === 'red') {
+                card.classList.add('pds-red');
+                classificationEl.classList.add('text-red-700', 'font-bold');
+                elements.pdsScore.classList.add('text-red-700');
+            } else if (lowerColor === 'yellow') {
+                card.classList.add('pds-yellow');
+                classificationEl.classList.add('text-yellow-700', 'font-bold');
+                elements.pdsScore.classList.add('text-yellow-700');
+            } else if (lowerColor === 'green') {
+                card.classList.add('pds-green');
+                classificationEl.classList.add('text-green-700', 'font-bold');
+                elements.pdsScore.classList.add('text-green-700');
+            } else {
+                card.classList.add('pds-gray');
+                classificationEl.classList.add('text-gray-500');
+                elements.pdsScore.classList.add('text-gray-700');
+            }
+        }
+
+
         function updateStatusDisplay(status) {
             elements.connectionIndicator.classList.remove('connected', 'buffering');
             elements.statusText.textContent = 'Data Stream: ';
@@ -343,6 +434,46 @@
             rrChart = createChart('rrChart', chartColors.rr);
         }
 
+        // *** NEW: ETA countdown function ***
+        function startEtaCountdown(initialEtaMinutes) {
+            // Clear any existing interval
+            if (etaInterval) {
+                clearInterval(etaInterval);
+            }
+
+            // If there's no valid ETA, clear the display and stop.
+            if (initialEtaMinutes == null || isNaN(initialEtaMinutes) || initialEtaMinutes <= 0) {
+                 elements.etaValue.textContent = '--';
+                 return;
+            }
+
+            // Store the initial minute value for comparison during logistics listening
+            currentEtaMinutes = initialEtaMinutes;
+
+            const updateEtaDisplay = () => {
+                if (currentEtaMinutes > 0) {
+                    const estimatedArrivalTime = new Date(new Date().getTime() + currentEtaMinutes * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    elements.etaValue.textContent = `${estimatedArrivalTime} (${currentEtaMinutes} min)`;
+                    elements.etaValue.classList.remove('text-green-700');
+                    elements.etaValue.classList.add('text-blue-700');
+                    currentEtaMinutes--;
+                } else {
+                    // Reached zero or negative, stop the timer and display final message
+                    clearInterval(etaInterval);
+                    etaInterval = null;
+                    elements.etaValue.textContent = 'Reached';
+                    elements.etaValue.classList.remove('text-blue-700');
+                    elements.etaValue.classList.add('text-green-700');
+                }
+            };
+
+            // Run once immediately, then start the interval
+            updateEtaDisplay();
+            if (currentEtaMinutes > 0) {
+                etaInterval = setInterval(updateEtaDisplay, 60000); // Update every 60 seconds (1 minute)
+            }
+        }
+
 
         // --- REAL-TIME LOGISTICS LISTENER ---
         function startLogisticsListener() {
@@ -353,6 +484,24 @@
 
                 // Get current patient info (the one that registered)
                 const registeredPatientId = elements.patientIdValue.textContent;
+
+                // *** ETA Update Logic ***
+                const etaM = parseInt(logistics?.eta_minutes);
+                if (logistics && logistics.estimated_arrival_time && !isNaN(etaM)) {
+                    // Only restart the countdown if the patient ID or the initial ETA value changes
+                    // OR if the interval isn't running but should be (e.g., page refresh)
+                    if (logistics.patient_id !== currentPatientId || etaM !== currentEtaMinutes || !etaInterval) {
+                        startEtaCountdown(etaM);
+                    }
+                } else {
+                    // Clear the ETA display and stop the timer
+                    elements.etaValue.textContent = '--';
+                    if (etaInterval) clearInterval(etaInterval);
+                    etaInterval = null;
+                }
+                elements.etaValue.classList.remove('text-green-700');
+                elements.etaValue.classList.add('text-blue-700');
+                // *** END ETA Update Logic ***
 
 
                 if (logistics && logistics.patient_id && logistics.patient_id !== '--') {
@@ -398,11 +547,7 @@
 
                     } else {
                         // --- 2. LOGISTICS PATIENT ID MISMATCH ---
-                        // This means the logistics node has been updated with a *different* patient ID.
-                        // This usually only happens if the logistics node was manually overwritten.
-                        // We will ignore the assignment data but keep the current patient's ID.
                         console.warn(`Logistics ID (${logistics.patient_id}) does not match Monitor ID (${registeredPatientId}). Ignoring assignment data for now.`);
-                        // The existing currentPatientId and display state is maintained by the outer else block logic or the current state.
                     }
 
 
@@ -412,6 +557,12 @@
                         currentPatientId = await generatePatientId();
                         elements.patientIdValue.textContent = currentPatientId;
                     }
+
+                    // Stop and reset ETA countdown
+                    if (etaInterval) clearInterval(etaInterval);
+                    etaInterval = null;
+                    elements.etaValue.textContent = '--';
+
 
                     // Unlock demographics and enable save button
                     elements.nameInput.disabled = false;
@@ -462,6 +613,10 @@
                 const logisticsSnapshot = await logisticsRef.once('value');
                 const currentLogistics = logisticsSnapshot.val() || {};
 
+                // Generate random ETA (5 to 55 minutes)
+                const etaMinutes = Math.floor(Math.random() * (55 - 5 + 1)) + 5;
+                const arrivalTime = new Date(new Date().getTime() + etaMinutes * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
 
                 // 1. Update/Register patient in the Reception's patient list (/patients/{pId})
                 const patientDataToSave = {
@@ -479,16 +634,20 @@
                 };
 
                 // 2. Update the active logistics node (/logistics)
-                // CRITICAL FIX: Only overwrite the core patient demographics and set bed back to '--'
-                // IF the patient ID is changing or the bed was previously set.
                 let doctor = currentLogistics.doctor || '--';
                 let nurse = currentLogistics.nurse || '--';
                 let paramedic = currentLogistics.paramedic || '--';
                 let bed = currentLogistics.bed || '--';
 
-                // If we are registering a *new* patient, we must reset the assignment details
+                let etaM = currentLogistics.eta_minutes || '--';
+                let etaT = currentLogistics.estimated_arrival_time || '--';
+
+
+                // If we are registering a *new* patient, we must reset the assignment details and set ETA
                 if (currentLogistics.patient_id !== pId || bed !== '--') {
                     doctor = nurse = paramedic = bed = '--';
+                    etaM = etaMinutes; // Apply new ETA
+                    etaT = arrivalTime;
                 }
 
                 const logisticsDataToSave = {
@@ -500,6 +659,8 @@
                     nurse: nurse,
                     paramedic: paramedic,
                     bed: bed,
+                    eta_minutes: etaM, // Save the minutes
+                    estimated_arrival_time: etaT, // Save the time string
                     updated_at: new Date().toISOString()
                 };
 
@@ -543,6 +704,8 @@
                 nurse: '--',
                 paramedic: '--',
                 bed: '--',
+                eta_minutes: '--',
+                estimated_arrival_time: '--',
                 updated_at: new Date().toISOString()
             };
 
@@ -565,6 +728,11 @@
             elements.nameInput.value = '';
             elements.ageInput.value = '';
             elements.genderInput.value = 'M';
+
+            // NEW: Stop and reset ETA countdown
+            if (etaInterval) clearInterval(etaInterval);
+            etaInterval = null;
+            elements.etaValue.textContent = '--';
 
             console.log("Monitor stream cleared and logistics reset.");
             // Force the listener to run once to generate a new P-ID immediately
@@ -590,7 +758,7 @@
                 const liveVitalsData = snapshot.val() || {};
 
                 // Default placeholders if data is missing
-                const defaultVitals = { hr: '--', hrv: '--', rr: '--', spo2: '--', temp: '--', status: 'OFFLINE' };
+                const defaultVitals = { hr: '--', hrv: '--', rr: '--', spo2: '--', temp: '--', status: 'OFFLINE', pds_score: '--', pds_classification: 'Risk Level', pds_color: 'gray' };
                 const data = { ...defaultVitals, ...liveVitalsData };
 
                 // 3. VITAL SIGNS ASSIGNMENT
@@ -599,6 +767,12 @@
                 elements.rr.textContent = formatValue(data.rr, 2);
                 elements.spo2.textContent = formatValue(data.spo2, 1);
                 elements.temp.textContent = formatValue(data.temp, 2);
+
+                // PDS ASSIGNMENT
+                elements.pdsScore.textContent = data.pds_score || '--';
+                elements.pdsClassification.textContent = data.pds_classification || 'Risk Level';
+                updatePdsCardColor(data.pds_color);
+
 
                 // 4. CHART UPDATE LOGIC
                 // NOTE: The waveform arrays (ecg_waveform, etc.) should be written by the Python script.
