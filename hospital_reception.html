@@ -6,6 +6,9 @@
     <title>Hospital Reception System (Firebase RTDB)</title>
     <script src="https://cdn.tailwindcss.com"></script>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
+
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
 
@@ -43,11 +46,24 @@
 
         <div class="column">
             <h2 class="text-lg font-semibold mb-3">Selected Patient Vitals <span id="vitals-patient-name" class="font-normal text-gray-600"></span></h2>
-            <div id="vitals-display" class="grid grid-cols-2 gap-4">
+
+            <div class="flex justify-between items-center mb-4">
+                <div id="pds-card" class="p-3 border rounded text-center w-1/2 mr-2 transition-colors duration-300 border-gray-300 bg-white">
+                    <span class="block text-xs text-gray-500">PDS Score</span>
+                    <span id="pds-score-value" class="text-3xl font-bold">--</span>
+                    <span id="pds-classification" class="block text-xs font-semibold mt-1 text-gray-500">N/A</span>
+                </div>
+                <div class="p-3 border rounded text-center w-1/2 ml-2">
+                    <span class="block text-xs text-gray-500">AMBULANCE ETA</span>
+                    <span id="eta-reception-value" class="text-xl font-bold text-blue-700">--</span>
+                </div>
+            </div>
+            <div id="vitals-display" class="grid grid-cols-3 gap-4">
                 <div class="p-3 border rounded text-center"><span class="block text-xs text-gray-500">HR (BPM)</span><span id="hr-value" class="text-3xl font-bold text-green-500">--</span></div>
                 <div class="p-3 border rounded text-center"><span class="block text-xs text-gray-500">SpO₂ (%)</span><span id="spo2-value" class="text-3xl font-bold text-blue-500">--</span></div>
                 <div class="p-3 border rounded text-center"><span class="block text-xs text-gray-500">RR (BPM)</span><span id="rr-value" class="text-3xl font-bold text-yellow-600">--</span></div>
                 <div class="p-3 border rounded text-center"><span class="block text-xs text-gray-500">Temp (°C)</span><span id="temp-value" class="text-3xl font-bold text-red-500">--</span></div>
+                <div class="p-3 border rounded text-center"><span class="block text-xs text-gray-500">HRV (ms)</span><span id="hrv-value" class="text-3xl font-bold text-purple-600">--</span></div>
             </div>
 
             <h3 class="text-md font-semibold mt-4 mb-2 border-t pt-2">Current Assignment</h3>
@@ -58,9 +74,14 @@
                 <p id="assigned-nurse-name"><span class="font-medium text-gray-600">Nurse:</span> --</p>
             </div>
 
-            <button id="discharge-patient-btn" class="w-full bg-green-500 text-white py-2 rounded mt-4 hover:bg-green-600 disabled:bg-gray-400" disabled>
-                ✅ Discharge Patient
-            </button>
+            <div class="flex gap-2 mt-4">
+                <button id="generate-pdf-btn" class="w-1/2 bg-gray-600 text-white py-2 rounded hover:bg-gray-700 disabled:bg-gray-400" disabled>
+                    📄 Generate EPCR PDF
+                </button>
+                <button id="discharge-patient-btn" class="w-1/2 bg-green-500 text-white py-2 rounded hover:bg-green-600 disabled:bg-gray-400" disabled>
+                    ✅ Discharge Patient
+                </button>
+            </div>
             </div>
 
         <div class="column">
@@ -149,7 +170,7 @@
 
 
     <script>
-        // *** ✅ FIREBASE CONFIGURATION UPDATED ✅ ***
+        // *** FIREBASE CONFIGURATION ***
         const firebaseConfig = {
           apiKey: "AIzaSyAAUeebZlb07z-90q2noOiSQAZa99Q1RX0",
           authDomain: "ambulance-monitoring-5ad1a.firebaseapp.com",
@@ -165,6 +186,8 @@
         const app = firebase.initializeApp(firebaseConfig);
         const db = app.database();
         const dbRef = db.ref('/'); // Reference to the root of the database
+        const vitalsRef = db.ref('vitals'); // Dedicated reference for real-time vitals
+        const historyRef = db.ref('vitals_history'); // Reference for historical data
 
         // Global State (Updated by Firebase listener)
         let currentPatientId = null;
@@ -172,6 +195,7 @@
         let allRoomsData = {};
         let vitalsData = {};
         let allPatientsData = {};
+        let logisticsData = {}; // <-- Global state for logistics data
 
         // --- FIREBASE UTILITIES ---
 
@@ -198,35 +222,41 @@
                     temp: '--'
                 },
                 patients: {
-                    'P100001': { id: 'P100001', name: 'John Doe', age: 45, gender: 'M', condition: 'Chest Pain', is_active: true, registration_time: new Date().toISOString(), current_room: '', assigned_doctor_id: '', assigned_nurse_id: '' },
-                    'P100002': { id: 'P100002', name: 'Jane Smith', age: 28, gender: 'F', condition: 'Broken Wrist', is_active: true, registration_time: new Date().toISOString(), current_room: '', assigned_doctor_id: '', assigned_nurse_id: '' }
+                    'P100001': { id: 'P100001', name: 'Vasu', age: 45, gender: 'M', condition: 'Chest Pain', is_active: true, registration_time: new Date().toISOString(), current_room: '', assigned_doctor_id: '', assigned_nurse_id: '' },
+                    'P100002': { id: 'P100002', name: 'Anand', age: 28, gender: 'M', condition: 'Broken Wrist', is_active: true, registration_time: new Date().toISOString(), current_room: '', assigned_doctor_id: '', assigned_nurse_id: '' }
                 },
                 staff: {
                     paramedics: {
-                        'EMT001': { id: 'EMT001', name: 'EMT A. Jones', status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' },
-                        'EMT002': { id: 'EMT002', name: 'EMT B. Khan', status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' }
+                        'EMT001': { id: 'EMT001', name: 'Meena', status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' },
+                        'EMT002': { id: 'EMT002', name: 'Amrindra', status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' }
                     },
                     doctors: {
-                        'DR001': { id: 'DR001', name: 'Dr. C. Lee', status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' },
+                        'DR001': { id: 'DR001', name: 'Dr. Agarwal', status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' },
                         'DR002': { id: 'DR002', name: 'Dr. D. Patel', status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' }
                     },
                     nurses: {
-                        'NRS001': { id: 'NRS001', name: 'RN E. Miller', status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' },
-                        'NRS002': { id: 'NRS002', name: 'RN F. Garcia', status: 'ABSENT', current_assignment_room_id: '', current_assignment_patient_id: '' }
+                        'NRS001': { id: 'NRS001', name: 'Rita', status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' },
+                        'NRS002': { id: 'NRS002', name: 'Garcia', status: 'ABSENT', current_assignment_room_id: '', current_assignment_patient_id: '' }
                     }
                 },
                 er_rooms: {
                     critical: [
                         { id: 'TB1', type: 'Trauma Bay', triage: 'critical', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
-                        { id: 'TB2', type: 'Trauma Bay', triage: 'critical', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' }
+                        { id: 'TB2', type: 'Trauma Bay', triage: 'critical', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
+                        { id: 'TB3', type: 'Trauma Bay 3', triage: 'critical', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
+                        { id: 'TB4', type: 'Trauma Bay 4', triage: 'critical', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' }
                     ],
                     urgent: [
                         { id: 'RBA', type: 'Resus Bed A', triage: 'urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
-                        { id: 'RBB', type: 'Resus Bed B', triage: 'urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' }
+                        { id: 'RBB', type: 'Resus Bed B', triage: 'urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
+                        { id: 'RBC', type: 'Resus Bed C', triage: 'urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
+                        { id: 'RBD', type: 'Resus Bed D', triage: 'urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' }
                     ],
                     less_urgent: [
                         { id: 'MSR', type: 'Minor Suture Rm', triage: 'less_urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
-                        { id: 'OB1', type: 'Observation Bed 1', triage: 'less_urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' }
+                        { id: 'OB1', type: 'Observation Bed 1', triage: 'less_urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
+                        { id: 'OB2', type: 'Observation Bed 2', triage: 'less_urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' },
+                        { id: 'PROC', type: 'Procedure Room', triage: 'less_urgent', status: 'AVAILABLE', assigned_patient_id: '', assigned_paramedic_id: '', assigned_doctor_id: '', assigned_nurse_id: '' }
                     ]
                 },
                 logistics: {
@@ -238,7 +268,14 @@
                     nurse: '--',
                     paramedic: '--',
                     bed: '--',
-                    updated_at: new Date().toISOString()
+                    // <-- ADDED ETA PLACEHOLDERS -->
+                    eta_minutes: '--',
+                    estimated_arrival_time: '--',
+                    updated_at: new Date().toISOString(),
+                    // <-- NEW: EPCR PLACEHOLDERS -->
+                    moi: '--', // Mechanism of Injury
+                    initial_assessment: '--',
+                    emt_notes: '--'
                 },
                  er_resources: {
                     trauma_bay_1: 'AVAILABLE',
@@ -280,9 +317,19 @@
             return (allStaffData[staffKey] && allStaffData[staffKey][id]?.name) || id;
         }
 
+        function formatTimestamp(timestampMs) {
+            if (!timestampMs) return '--';
+            const date = new Date(parseInt(timestampMs));
+            const hours = date.getHours().toString().padStart(2, '0');
+            const minutes = date.getMinutes().toString().padStart(2, '0');
+            const seconds = date.getSeconds().toString().padStart(2, '0');
+            return `${hours}:${minutes}:${seconds}`;
+        }
+
         // --- MAIN REAL-TIME LISTENER ---
 
         function renderDashboardFromFirebase(snapshot) {
+            // This function runs on ALL DB changes (Staff, Patients, Logistics, Vitals)
             const db = snapshot.val();
 
             if (!db) {
@@ -291,14 +338,15 @@
                 return;
             }
 
-            // 1. Update Global State from the snapshot
-            vitalsData = db.vitals || {};
+            // 1. Update Global State from the snapshot (Excluding Vitals, which has its own fast listener)
             allStaffData = db.staff || getInitialData().staff;
             allRoomsData = db.er_rooms || getInitialData().er_rooms;
             allPatientsData = db.patients || {};
+            logisticsData = db.logistics || getInitialData().logistics; // <-- FETCH LOGISTICS DATA
 
-            // 2. Render UI
-            renderVitals(vitalsData);
+            // 2. Render UI (Structural/Assignment updates)
+            // Call renderVitals here to set initial/default state using the stored vitalsData
+            renderVitals(vitalsData); // Note: Vitals data is updated asynchronously by startRealTimeVitalsListener
             renderPatientList(db.patients);
             renderCurrentAssignment(currentPatientId, allRoomsData, allStaffData, db.patients);
 
@@ -310,28 +358,59 @@
 
             renderManagementStaffList(allStaffData);
 
-            // ⭐ FIX: Call the dedicated Discharge Button handler
-            updateDischargeButtonStatus();
+            // ⭐ Call the dedicated Discharge and PDF Button handler
+            updateActionButtonsStatus();
         }
+
+        // --- NEW: DEDICATED REAL-TIME VITALS LISTENER ---
+        function startRealTimeVitalsListener() {
+            vitalsRef.on('value', (snapshot) => {
+                const liveVitals = snapshot.val();
+                if (liveVitals) {
+                    vitalsData = liveVitals; // Update global state
+                    // Immediately re-render the vitals section with the new data
+                    // FIX: Only re-render if the patient ID in live data matches the selected patient.
+                    if (currentPatientId && liveVitals.patient_id === currentPatientId) {
+                        renderVitals(vitalsData);
+                    } else if (!currentPatientId) {
+                         // Reset vitals if no patient is selected
+                        renderVitals(null);
+                    }
+                }
+            }, (error) => {
+                console.error("Firebase Vitals Listener Failed:", error);
+            });
+        }
+
 
         // --- RENDER FUNCTIONS ---
 
         /**
-         * Explicitly enables/disables the Discharge button based on selected patient's status.
+         * Explicitly enables/disables the Discharge and PDF buttons based on selected patient's status.
          */
-        function updateDischargeButtonStatus() {
+        function updateActionButtonsStatus() {
             const dischargeButton = document.getElementById('discharge-patient-btn');
+            const pdfButton = document.getElementById('generate-pdf-btn');
 
             // Check global state: currentPatientId and its assignment status
             const patient = currentPatientId ? allPatientsData[currentPatientId] : null;
 
             let isAssigned = false;
-            // The button should be enabled ONLY if a patient is selected AND they are assigned to a room (not 'DISCHARGED').
-            if (currentPatientId && patient && patient.current_room && patient.current_room !== 'DISCHARGED') {
-                 isAssigned = true;
+            let canGeneratePdf = false;
+
+            if (currentPatientId && patient) {
+                // Discharge enabled ONLY if patient is active and assigned to a room
+                if (patient.is_active && patient.current_room && patient.current_room !== 'DISCHARGED') {
+                     isAssigned = true;
+                }
+                // PDF generation enabled if patient is selected (active or discharged)
+                if (patient.is_active || patient.current_room === 'DISCHARGED') {
+                    canGeneratePdf = true;
+                }
             }
 
             dischargeButton.disabled = !isAssigned;
+            pdfButton.disabled = !canGeneratePdf;
         }
 
 
@@ -456,11 +535,29 @@
                 return;
             }
 
-            // Filter to only include ACTIVE patients (is_active: true)
-            const activePatientsArray = Object.values(patientsData).filter(patient => patient.is_active);
+            // REVISED FILTER: Include all ACTIVE patients OR the CURRENTLY SELECTED patient, even if DISCHARGED.
+            const displayPatientsArray = Object.values(patientsData).filter(patient => {
+                // Keep active patients
+                if (patient.is_active) {
+                    return true;
+                }
+                // Keep the currently selected patient, even if discharged, for PDF generation
+                if (patient.id === currentPatientId) {
+                    return true;
+                }
+                // Filter out all other discharged/inactive patients
+                return false;
+            });
 
-            const patientArray = activePatientsArray.sort((a, b) => {
-                return new Date(a.registration_time) - new Date(b.registration_time);
+            const patientArray = displayPatientsArray.sort((a, b) => {
+                // Sort by active status first (active > discharged) then by time (newest first)
+                if (a.is_active && !b.is_active) return -1;
+                if (!a.is_active && b.is_active) return 1;
+
+                const aTime = new Date(a.registration_time).getTime();
+                const bTime = new Date(b.registration_time).getTime();
+
+                return bTime - aTime;
             });
 
             if (patientArray.length === 0) {
@@ -473,20 +570,32 @@
 
             patientArray.forEach(patient => {
                 const isSelected = patient.id === currentPatientId;
-                const statusColor = patient.current_room ? 'border-green-500 bg-green-50' : 'border-blue-500';
-                const statusText = patient.current_room ? `Assigned to ${patient.current_room}` : 'Awaiting Assignment';
+                let statusColor, statusText;
+
+                if (patient.current_room === 'DISCHARGED') {
+                    statusColor = 'border-gray-500 bg-gray-100';
+                    statusText = 'DISCHARGED';
+                } else if (patient.current_room) {
+                    statusColor = 'border-green-500 bg-green-50';
+                    statusText = `Assigned to ${patient.current_room}`;
+                } else {
+                    statusColor = 'border-blue-500';
+                    statusText = 'Awaiting Assignment';
+                }
+
+                const condition = patient.condition || 'N/A';
 
                 listElement.innerHTML += `
                     <div class="p-2 border ${statusColor} rounded cursor-pointer hover:bg-gray-100 ${isSelected ? 'bg-blue-100' : ''}"
                          onclick="selectPatient('${patient.id}', '${patient.name}')">
                         <span class="font-medium">${patient.name} (${patient.age}/${patient.gender})</span>
-                        <span class="block text-xs text-gray-500">PID: ${patient.id} - ${patient.condition} (<span class="font-semibold">${statusText}</span>)</span>
+                        <span class="block text-xs text-gray-500">PID: ${patient.id} - ${condition} (<span class="font-semibold">${statusText}</span>)</span>
                     </div>
                 `;
             });
 
             if (currentPatientId) {
-                const selectedPatient = patientArray.find(p => p.id === currentPatientId);
+                const selectedPatient = allPatientsData[currentPatientId];
                 document.getElementById('vitals-patient-name').textContent = selectedPatient ? `(${selectedPatient.name})` : '';
             } else {
                 document.getElementById('vitals-patient-name').textContent = '';
@@ -539,35 +648,247 @@
         }
 
         function renderVitals(data) {
-            if (!data || !currentPatientId) {
-                 document.getElementById('hr-value').textContent = '--';
-                 document.getElementById('spo2-value').textContent = '--';
-                 document.getElementById('rr-value').textContent = '--';
-                 document.getElementById('temp-value').textContent = '--';
-                 document.getElementById('active-patient-id').textContent = '(Select Patient)';
+            const hrValueEl = document.getElementById('hr-value');
+            const spo2ValueEl = document.getElementById('spo2-value');
+            const rrValueEl = document.getElementById('rr-value');
+            const tempValueEl = document.getElementById('temp-value');
+            const hrvValueEl = document.getElementById('hrv-value');
+
+            // PDS Elements
+            const pdsScoreEl = document.getElementById('pds-score-value');
+            const pdsClassEl = document.getElementById('pds-classification');
+            const pdsCardEl = document.getElementById('pds-card');
+
+            // NEW: ETA Element
+            const etaEl = document.getElementById('eta-reception-value');
+
+            // Check: If data is null OR if the data doesn't belong to the currently selected patient
+            if (!data || !currentPatientId || data.patient_id !== currentPatientId) {
+                 hrValueEl.textContent = '--';
+                 spo2ValueEl.textContent = '--';
+                 rrValueEl.textContent = '--';
+                 tempValueEl.textContent = '--';
+                 hrvValueEl.textContent = '--';
+
+                 pdsScoreEl.textContent = '--';
+                 pdsClassEl.textContent = 'N/A';
+
+                 // Reset PDS color
+                 pdsCardEl.classList.remove('bg-red-100', 'bg-yellow-100', 'bg-green-100');
+                 pdsCardEl.classList.add('bg-white');
+                 pdsClassEl.classList.add('text-gray-500');
+
+                 // NEW: Reset ETA
+                 etaEl.textContent = '--';
+                 etaEl.classList.remove('text-green-700');
+                 etaEl.classList.add('text-blue-700');
+
+                 document.getElementById('active-patient-id').textContent = '(Vitals Offline)'; // Reset to generic message
                  return;
             }
 
-            const patient = allPatientsData[currentPatientId];
+            const patient = allPatientsData[currentPatientId]; // Note: This check relies on patient still existing/being selected.
+
+            // --- NEW: ETA Logic ---
+            let etaDisplay = '--';
+            etaEl.classList.remove('text-green-700', 'text-blue-700');
+            etaEl.classList.add('text-blue-700'); // Default color
+
+            // Check if the monitored patient in logistics matches the patient being displayed
+            if (logisticsData.patient_id === currentPatientId) {
+                const etaM = logisticsData.eta_minutes;
+                const etaT = logisticsData.estimated_arrival_time;
+                const etaMinutesNum = parseInt(etaM);
+
+                if (etaM === '--' || isNaN(etaMinutesNum) || etaMinutesNum <= 0) {
+                    etaDisplay = 'Reached';
+                    etaEl.classList.remove('text-blue-700');
+                    etaEl.classList.add('text-green-700');
+                } else {
+                    // Display: ArrivalTime (Minutes remaining)
+                    etaDisplay = `${etaT || 'TBD'} (${etaMinutesNum} min)`;
+                }
+            } else {
+                // Patient selected but not the one being actively monitored/tracked by the ambulance
+                etaDisplay = '--';
+            }
+            etaEl.textContent = etaDisplay;
+            // --- END NEW: ETA Logic ---
+
+            // Check for PDS score and color
+            const pds_color = data.pds_color ? data.pds_color.toLowerCase() : 'gray';
+
+            // Apply background color based on PDS risk
+            pdsCardEl.classList.remove('bg-red-100', 'bg-yellow-100', 'bg-green-100', 'bg-white');
+            if (pds_color === 'red') {
+                pdsCardEl.classList.add('bg-red-100');
+            } else if (pds_color === 'yellow') {
+                pdsCardEl.classList.add('bg-yellow-100');
+            } else if (pds_color === 'green') {
+                pdsCardEl.classList.add('bg-green-100');
+            } else {
+                pdsCardEl.classList.add('bg-white');
+            }
+
 
             if (data.status === 'LIVE' && patient.current_room !== 'DISCHARGED') {
+                // Update Vitals (Real-Time values)
+                hrValueEl.textContent = data.hr || '--';
+                spo2ValueEl.textContent = data.spo2 || '--';
+                rrValueEl.textContent = data.rr || '--';
+                tempValueEl.textContent = data.temp || '--';
+                hrvValueEl.textContent = data.hrv || '--';
 
-                document.getElementById('hr-value').textContent = data.hr || '--';
-                document.getElementById('spo2-value').textContent = data.spo2 || '--';
-                document.getElementById('rr-value').textContent = data.rr || '--';
-                document.getElementById('temp-value').textContent = data.temp || '--';
+                // PDS UPDATE
+                pdsScoreEl.textContent = data.pds_score || '0';
+                pdsClassEl.textContent = data.pds_classification || 'N/A';
+
+                // Apply text color to classification
+                pdsClassEl.classList.remove('text-red-600', 'text-yellow-600', 'text-green-600', 'text-gray-500');
+                if (pds_color === 'red') pdsClassEl.classList.add('text-red-600');
+                else if (pds_color === 'yellow') pdsClassEl.classList.add('text-yellow-600');
+                else if (pds_color === 'green') pdsClassEl.classList.add('text-green-600');
+                else pdsClassEl.classList.add('text-gray-500');
+
+
                 document.getElementById('active-patient-id').textContent = `(PID: ${currentPatientId} - Live)`;
             } else {
-                document.getElementById('hr-value').textContent = '--';
-                document.getElementById('spo2-value').textContent = '--';
-                document.getElementById('rr-value').textContent = '--';
-                document.getElementById('temp-value').textContent = '--';
+                // If status is OFFLINE (or patient is discharged), display placeholders and update PDS color
+                hrValueEl.textContent = '--';
+                spo2ValueEl.textContent = '--';
+                rrValueEl.textContent = '--';
+                tempValueEl.textContent = '--';
+                hrvValueEl.textContent = '--';
+
+                pdsScoreEl.textContent = '--';
+                pdsClassEl.textContent = 'N/A';
+                pdsClassEl.classList.add('text-gray-500');
+                pdsCardEl.classList.remove('bg-red-100', 'bg-yellow-100', 'bg-green-100');
+                pdsCardEl.classList.add('bg-white');
+
                 document.getElementById('active-patient-id').textContent = '(Vitals Offline)';
             }
         }
 
+        // --- PDF GENERATION LOGIC ---
 
-        // --- FIREBASE DATA MODIFICATION HANDLERS ---
+        window.generateEpcrPdf = async function() {
+            if (!currentPatientId) {
+                alert("Please select a patient to generate the EPCR.");
+                return;
+            }
+
+            const pdfButton = document.getElementById('generate-pdf-btn');
+            pdfButton.disabled = true;
+            pdfButton.textContent = 'Generating PDF...';
+
+            const patient = allPatientsData[currentPatientId];
+            if (!patient) {
+                alert("Patient data not found.");
+                pdfButton.disabled = false;
+                pdfButton.textContent = '📄 Generate EPCR PDF';
+                return;
+            }
+
+            try {
+                // 1. Fetch historical vitals data for the selected patient
+                const snapshot = await historyRef.orderByChild('patient_id').equalTo(currentPatientId).once('value');
+                const historyData = snapshot.val();
+
+                if (!historyData) {
+                    alert(`No historical vitals found for Patient ${currentPatientId}.`);
+                    return;
+                }
+
+                // 2. Prepare Table Data (Headers and Body)
+                const headers = [
+                    { title: "Time", dataKey: "time" },
+                    { title: "HR", dataKey: "hr" },
+                    { title: "SpO₂", dataKey: "spo2" },
+                    { title: "RR", dataKey: "rr" },
+                    { title: "HRV", dataKey: "hrv" },
+                    { title: "Temp", dataKey: "temp" },
+                    { title: "PDS", dataKey: "pds_score" }
+                ];
+
+                // Convert Firebase object to an array of table rows
+                const dataArray = Object.values(historyData).filter(item => item.patient_id === currentPatientId);
+                dataArray.sort((a, b) => a.timestamp - b.timestamp); // Sort by timestamp ascending
+
+                const tableBody = dataArray.map(item => ({
+                    time: formatTimestamp(item.timestamp),
+                    hr: item.hr.toFixed(1) || '--',
+                    spo2: item.spo2.toFixed(1) || '--',
+                    rr: item.rr.toFixed(2) || '--',
+                    hrv: item.hrv.toFixed(2) || '--',
+                    temp: item.temp.toFixed(2) || '--',
+                    pds_score: item.pds_score.toString()
+                }));
+
+                // 3. Initialize jsPDF
+                // A4 size, portrait orientation
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+
+                // --- Document Header ---
+                let yPos = 10;
+                doc.setFontSize(16);
+                doc.text("Patient Care Report (e-PCR)", 105, yPos, { align: 'center' });
+                yPos += 8;
+
+                doc.setFontSize(10);
+                doc.text(`Patient ID: ${patient.id}`, 10, yPos);
+                doc.text(`Name: ${patient.name}`, 50, yPos);
+                doc.text(`Age: ${patient.age}`, 100, yPos);
+                doc.text(`Condition: ${patient.condition || 'N/A'}`, 130, yPos);
+                yPos += 5;
+
+                const dischargeInfo = patient.current_room === 'DISCHARGED' ? `Discharged From: ${patient.current_room} @ ${new Date(patient.discharge_time).toLocaleString()}` : 'Active Monitoring';
+                doc.text(dischargeInfo, 10, yPos);
+                yPos += 6;
+
+                doc.line(10, yPos, 200, yPos); // Horizontal line
+                yPos += 4;
+
+                // --- Vitals Table ---
+                doc.setFontSize(12);
+                doc.text("Ambulatory Vitals History", 10, yPos);
+                yPos += 2;
+
+                doc.autoTable({
+                    head: [headers.map(h => h.title)],
+                    body: tableBody.map(row => Object.values(row)),
+                    startY: yPos + 4,
+                    theme: 'grid',
+                    headStyles: { fillColor: [30, 41, 59], fontSize: 8 }, // Slate-800 background
+                    styles: { fontSize: 7, cellPadding: 1, overflow: 'linebreak' },
+                    columnStyles: {
+                        0: { cellWidth: 18 }, // Time
+                        1: { cellWidth: 15 }, // HR
+                        2: { cellWidth: 15 }, // SpO2
+                        3: { cellWidth: 15 }, // RR
+                        4: { cellWidth: 15 }, // HRV
+                        5: { cellWidth: 15 }, // Temp
+                        6: { cellWidth: 15 }  // PDS
+                    }
+                });
+
+                // 4. Save the PDF
+                const filename = `ePCR_${patient.id}_${new Date().toISOString().slice(0, 10)}.pdf`;
+                doc.save(filename);
+
+
+            } catch (error) {
+                console.error("PDF Generation Failed:", error);
+                alert("Failed to generate PDF. Check console for details.");
+            } finally {
+                pdfButton.disabled = false;
+                pdfButton.textContent = '📄 Generate EPCR PDF';
+            }
+        }
+
+
+        // --- FIREBASE DATA MODIFICATION HANDLERS (omitted for brevity) ---
 
         async function handleStaffRegistration() {
             const name = document.getElementById('new-staff-name').value.trim();
@@ -580,7 +901,7 @@
             }
 
             const typeKey = type + 's';
-            const existingIds = Object.keys(allStaffData[typeKey] || {});
+            const existingIds = Object.keys(allPatientsData[typeKey] || {});
 
             if (!id) {
                 id = generateStaffId(type, existingIds);
@@ -641,14 +962,14 @@
  * This is triggered periodically to catch patients registered via the Ambulatory Monitor.
  */
 function monitorForAutoAssignment() {
-    console.log("Monitoring for unassigned patients...");
+    // console.log("Monitoring for unassigned patients..."); // Removed for cleaner console
     // Use the global state which is continually updated by the listener
     const activePatientsArray = Object.values(allPatientsData).filter(p => p.is_active && !p.current_room);
 
     if (activePatientsArray.length > 0) {
         // We will call autoAssignPatient for the first unassigned patient found
         const patientToAssign = activePatientsArray[0];
-        console.log(`Found unassigned patient: ${patientToAssign.id}. Attempting auto-assignment.`);
+        // console.log(`Found unassigned patient: ${patientToAssign.id}. Attempting auto-assignment.`);
 
         // Use setTimeout to ensure the assignment is non-blocking and gets fresh resources
         setTimeout(() => autoAssignPatient(patientToAssign.id), 100);
@@ -666,6 +987,8 @@ async function autoAssignPatient(patientId) {
     // Use fresh data for the resources and the patient
     const allStaffDataFresh = dbData.staff || {};
     const allRoomsDataFresh = dbData.er_rooms || {};
+    const vitals = dbData.vitals || {}; // Fetch Vitals for PDS
+    const logistics = dbData.logistics || {}; // Fetch logistics for ETA persistence
     const patient = dbData.patients[patientId];
 
     // Check if patient exists, is active, and is awaiting room assignment
@@ -675,24 +998,48 @@ async function autoAssignPatient(patientId) {
 
     console.log(`Attempting auto-assignment for ${patientId}...`);
 
-    // --- 1. FIND AVAILABLE RESOURCES using FRESH data ---
-    const triageOrder = ['critical', 'urgent', 'less_urgent'];
-    let foundRoomAssignment = null;
+    // 1. --- DETERMINE REQUIRED TRIAGE CATEGORY BASED ON PDS ---
+    let requiredTriageCategory = 'less_urgent'; // Default
+    const pdsScore = vitals.pds_score || 0;
+    const pdsClassification = vitals.pds_classification || 'N/A';
 
-    // Find first available room
-    for (const triageCategory of triageOrder) {
-        const roomsArray = Array.isArray(allRoomsDataFresh[triageCategory]) ? allRoomsDataFresh[triageCategory] : Object.values(allRoomsDataFresh[triageCategory] || {});
-        const roomIndex = roomsArray.findIndex(r => r.status === 'AVAILABLE');
+    // *** PDS-BASED TRIAGE LOGIC ***
+    if (pdsScore >= 8) {
+        requiredTriageCategory = 'critical'; // Red: PDS >= 8
+    } else if (pdsScore >= 4) {
+        requiredTriageCategory = 'urgent';   // Yellow: PDS 4 to 7
+    } else { // pdsScore is 0 to 3
+        requiredTriageCategory = 'less_urgent'; // Green: PDS <= 3
+    }
 
-        if (roomIndex !== -1) {
-            foundRoomAssignment = {
-                triage: triageCategory,
-                index: roomIndex,
-                room: roomsArray[roomIndex]
-            };
-            break;
+    // Fallback: If PDS is N/A due to sensor error, use patient's condition for initial triage guess (Simple check)
+    if (pdsClassification.includes('Sensor Error')) {
+        if (patient.condition.toLowerCase().includes('chest pain') || patient.condition.toLowerCase().includes('trauma')) {
+            requiredTriageCategory = 'critical';
+        } else if (patient.condition.toLowerCase().includes('broken') || patient.condition.toLowerCase().includes('fracture')) {
+            requiredTriageCategory = 'urgent';
         }
     }
+    // --------------------------------------------------------
+
+    // 2. --- FIND AVAILABLE RESOURCES using FRESH data ---
+    let foundRoomAssignment = null;
+
+    // Search the required triage category for an available room
+    const targetRoomsArray = Array.isArray(allRoomsDataFresh[requiredTriageCategory]) ? allRoomsDataFresh[requiredTriageCategory] : Object.values(allRoomsDataFresh[requiredTriageCategory] || {});
+    const roomIndex = targetRoomsArray.findIndex(r => r.status === 'AVAILABLE');
+
+    if (roomIndex !== -1) {
+        foundRoomAssignment = {
+            triage: requiredTriageCategory,
+            index: roomIndex,
+            room: targetRoomsArray[roomIndex]
+        };
+    } else {
+        console.warn(`No room available in the required ${requiredTriageCategory.toUpperCase()} Triage category.`);
+        // No room is found in the ideal category. Assignment will fail if staff isn't found either.
+    }
+
 
     // Function to find available staff from the freshly fetched staff data
     const findAvailableStaff = (type) => {
@@ -705,10 +1052,10 @@ async function autoAssignPatient(patientId) {
     const assignedNurse = findAvailableStaff('nurse');
     const assignedParamedic = findAvailableStaff('paramedic');
 
-    // --- 2. EXECUTE ASSIGNMENT IF ALL RESOURCES ARE FOUND ---
+    // 3. --- EXECUTE ASSIGNMENT IF ALL RESOURCES ARE FOUND ---
     if (foundRoomAssignment && assignedDoctor && assignedNurse && assignedParamedic) {
 
-        console.log(`Auto-assignment successful for ${patientId}. Deploying resources.`);
+        console.log(`Auto-assignment successful for ${patientId}. Deploying resources to ${foundRoomAssignment.triage.toUpperCase()}. Triage based on PDS Score: ${pdsScore}.`);
 
         const { triage, index, room } = foundRoomAssignment;
         const updates = {};
@@ -738,7 +1085,7 @@ async function autoAssignPatient(patientId) {
             assigned_nurse_id: assignedNurse.id,
         };
 
-        // D. Logistics Node Update (Crucial for Monitor Dashboard)
+        // D. Logistics Node Update (Crucial for Monitor Dashboard, preserve ETA/logistics data)
         updates['logistics'] = {
             patient_id: patient.id,
             patient_name: patient.name,
@@ -748,20 +1095,27 @@ async function autoAssignPatient(patientId) {
             nurse: assignedNurse.name,
             paramedic: assignedParamedic.name,
             bed: `${room.type} (${room.id})`,
-            updated_at: new Date().toISOString()
+            updated_at: new Date().toISOString(),
+            // Preserving ETA fields from the monitor's registration step (from the fresh logistics snapshot)
+            eta_minutes: logistics.eta_minutes || '--',
+            estimated_arrival_time: logistics.estimated_arrival_time || '--',
+            // NEW: Preserving EPCR fields
+            moi: logistics.moi || '--',
+            initial_assessment: logistics.initial_assessment || '--',
+            emt_notes: logistics.emt_notes || '--'
         };
 
         await dbRef.update(updates);
-        alert(`AUTOMATED ASSIGNMENT: Patient ${patientId} assigned to ${room.id} (${triage.toUpperCase()})!`);
+        alert(`AUTOMATED ASSIGNMENT: Patient ${patientId} assigned to ${room.id} (${triage.toUpperCase()})! Triage based on PDS Score: ${pdsScore}.`);
         currentPatientId = null; // Deselect patient after assignment
 
-        // ⭐ NEW: Trigger immediate UI refresh after successful assignment
+        // Trigger immediate UI refresh after successful assignment
         dbRef.once('value', renderDashboardFromFirebase);
 
     } else {
-        // --- 3. ASSIGNMENT FAILED ---
+        // --- 4. ASSIGNMENT FAILED ---
         let missing = [];
-        if (!foundRoomAssignment) missing.push('Room');
+        if (!foundRoomAssignment) missing.push(`Room in ${requiredTriageCategory.toUpperCase()} (PDS: ${pdsScore})`);
         if (!assignedDoctor) missing.push('Doctor');
         if (!assignedNurse) missing.push('Nurse');
         if (!assignedParamedic) missing.push('Paramedic');
@@ -847,7 +1201,7 @@ async function autoAssignPatient(patientId) {
 
                 alert(`Patient ${patientId} discharged. Room ${roomToUpdate.id} and all assigned staff are now AVAILABLE.`);
 
-                // ⭐ NEW: Trigger immediate UI refresh after successful discharge
+                // Trigger immediate UI refresh after successful discharge
                 dbRef.once('value', renderDashboardFromFirebase);
 
             } catch (error) {
@@ -856,7 +1210,7 @@ async function autoAssignPatient(patientId) {
             } finally {
                 dischargeButton.textContent = '✅ Discharge Patient';
                 dischargeButton.disabled = false;
-                currentPatientId = null;
+                // Keep currentPatientId selected so the PDF button remains active for the just-discharged patient.
             }
         }
 
@@ -894,7 +1248,7 @@ async function handlePatientRegistration() {
         // Trigger auto-assignment immediately for local clicks.
         autoAssignPatient(newPatientId);
 
-        // ⭐ NEW: Trigger immediate UI refresh after saving new patient
+        // Trigger immediate UI refresh after saving new patient
         dbRef.once('value', renderDashboardFromFirebase);
 
         document.getElementById('patient-modal').style.display = 'none';
@@ -912,9 +1266,15 @@ async function handlePatientRegistration() {
 
         window.selectPatient = function(patientId, patientName) {
             if (currentPatientId === patientId) {
+                // If the same patient is clicked, deselect
                 currentPatientId = null;
+                // Force reset of Vitals display
+                renderVitals(null);
             } else {
                 currentPatientId = patientId;
+                // Trigger a check to immediately render Vitals using the latest global state (vitalsData)
+                // This ensures the Vitals/EPCR block updates instantly upon selection.
+                renderVitals(vitalsData);
             }
             // Manually force a UI redraw on patient selection to ensure immediate feedback
             dbRef.once('value', renderDashboardFromFirebase);
@@ -929,14 +1289,19 @@ async function handlePatientRegistration() {
 
         document.addEventListener('DOMContentLoaded', () => {
 
-            // 🟢 START REAL-TIME LISTENER
+            // 🟢 START REAL-TIME LISTENERS
+            // 1. Full database listener (for patient list, rooms, staff)
             dbRef.on('value', renderDashboardFromFirebase, (error) => {
                 console.error("Firebase Listener Failed:", error);
                 alert("Connection to Realtime Database failed. Check console and configuration.");
             });
 
-            // ⭐ START MONITORING LOOP: Checks every 3 seconds for patients awaiting assignment (from Ambulatory Monitor)
-            setInterval(monitorForAutoAssignment, 3000);
+            // 2. Dedicated Vitals listener (for real-time metric updates)
+            startRealTimeVitalsListener();
+
+
+            // ⭐ START MONITORING LOOP: Checks every 500ms for patients awaiting assignment (QUICK RESPONSE)
+            setInterval(monitorForAutoAssignment, 500);
 
             // Patient Modal Handlers
             document.getElementById('add-patient-btn').addEventListener('click', () => {
@@ -956,6 +1321,7 @@ async function handlePatientRegistration() {
 
             // Core Logic Handlers
             document.getElementById('discharge-patient-btn').addEventListener('click', dischargePatient);
+            document.getElementById('generate-pdf-btn').addEventListener('click', generateEpcrPdf);
         });
 
     </script>
