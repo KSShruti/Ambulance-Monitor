@@ -3,9 +3,15 @@ import numpy as np
 import time
 import threading
 from scipy.signal import butter, filtfilt, find_peaks, detrend
-import csv
-import datetime
-import json
+from datetime import datetime
+import uuid  # Used for generating a unique patient ID
+
+# --- FIREBASE IMPORTS ---
+import firebase_admin
+from firebase_admin import credentials, db
+from firebase_admin import exceptions as fb_exceptions  # Import Firebase exceptions
+
+# ----------------------------
 
 # --- 1. CONFIGURATION (CRITICAL: MUST MATCH ARDUINO) ---
 SERIAL_PORT = 'COM6'  # <<< CURRENTLY SET TO COM6 - CHANGE AS NEEDED!
@@ -16,12 +22,7 @@ FS = 100.0
 WINDOW_SECONDS = 30
 BUFFER_SIZE = int(WINDOW_SECONDS * FS)
 CALCULATION_INTERVAL = 1.0
-
-# --- DATA LOGGING CONSTANTS ---
-LOGGING_INTERVAL = 30.0  # Log data every 30 seconds
-LOG_FILE_NAME = 'patient_vitals_log.csv'
-# ------------------------------
-
+EPCR_INTERVAL = 30.0  # NEW: Interval for e-PCR snapshot
 RAW_WAVEFORM_WINDOW_SECONDS = 5
 
 # --- SPO2 CALIBRATION COEFFICIENTS ---
@@ -31,28 +32,18 @@ SPO2_B = 18.0
 # --- FIREBASE SETUP ---
 FIREBASE_CRED_PATH = "C:/Users/USER/Downloads/ambulance-monitoring-5ad1a-firebase-adminsdk-fbsvc-dd6120eecf.json"
 FIREBASE_DATABASE_URL = "https://ambulance-monitoring-5ad1a-default-rtdb.asia-southeast1.firebasedatabase.app"
-FIREBASE_NODE_LIVE = 'vitals'  # Node for live data (fast updates)
-FIREBASE_NODE_HISTORY = 'vitals_history'  # NEW: Node for historical data (slow updates)
+FIREBASE_NODE = 'vitals'
 # ----------------------------------------------------
 
 
 # --- INITIALIZE FIREBASE ADMIN SDK ---
+ref = None
 try:
-    import firebase_admin
-    from firebase_admin import credentials, db
-
     cred = credentials.Certificate(FIREBASE_CRED_PATH)
     firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DATABASE_URL})
-    ref_live = db.reference(FIREBASE_NODE_LIVE)
-    ref_history = db.reference(FIREBASE_NODE_HISTORY)  # NEW: Reference for history
+    ref = db.reference(FIREBASE_NODE)
     print("--- Firebase Connection Successful ---")
-except ImportError:
-    ref_live = None
-    ref_history = None
-    print("\nFATAL ERROR: Firebase dependencies not found. Install 'firebase-admin'.")
 except Exception as e:
-    ref_live = None
-    ref_history = None
     print(f"\nFATAL ERROR: Could not initialize Firebase. Details: {e}")
 
 # --- 2. SIGNAL VALIDATION THRESHOLDS ---
@@ -69,7 +60,7 @@ PPG_LOW_CUTOFF = 0.5
 PPG_HIGH_CUTOFF = 5.0
 PPG_FILTER_ORDER = 3
 
-# --- 4. Global Data Buffer, State, and Metrics ---
+# --- 4. Global Data Buffer, State, and Metrics (UPDATED) ---
 data_buffer_ecg = np.zeros(BUFFER_SIZE)
 data_buffer_ir = np.zeros(BUFFER_SIZE)
 data_buffer_red = np.zeros(BUFFER_SIZE)
@@ -78,7 +69,7 @@ data_buffer_temp = np.zeros(BUFFER_SIZE)
 buffer_index = 0
 data_points_received = 0
 last_calculation_time = 0.0
-last_logging_time = 0.0
+last_epcr_time = 0.0  # NEW: Global variable for tracking e-PCR time
 
 # Initial state (used before first calculation)
 latest_metrics = {
@@ -91,10 +82,6 @@ latest_metrics = {
     "pds_score": 0,
     "pds_classification": "N/A",
     "pds_color": "gray",
-    "hr_score": 0,  # Added for history logging
-    "rr_score": 0,  # Added for history logging
-    "spo2_score": 0,  # Added for history logging
-    "hrv_score": 0,  # Added for history logging
     "ecg_waveform": [0.0] * int(RAW_WAVEFORM_WINDOW_SECONDS * FS),
     "ppg_waveform": [0.0] * int(RAW_WAVEFORM_WINDOW_SECONDS * FS),
     "rr_waveform": [0.0] * int(RAW_WAVEFORM_WINDOW_SECONDS * FS),
@@ -144,12 +131,10 @@ def calculate_hr_hrv(ecg_signal, fs):
     if len(peaks) >= 2:
         r_peak_times_s = peaks / fs
         ibi_s = np.diff(r_peak_times_s)
-        # Filter implausible IBI values (e.g., HR > 200 or HR < 50)
         ibi_s = ibi_s[(ibi_s > 0.3) & (ibi_s < 1.2)]
         if len(ibi_s) >= 2:
             avg_hr = 60.0 / np.mean(ibi_s)
             diff_ibi = np.diff(ibi_s)
-            # RMSSD in milliseconds
             rmssd = np.sqrt(np.mean(diff_ibi ** 2)) * 1000
 
     return avg_hr, rmssd, filtered_ecg[-int(FS * RAW_WAVEFORM_WINDOW_SECONDS):]
@@ -176,9 +161,6 @@ def calculate_rr(ecg_signal, fs):
         peak_times_s = peaks / fs
         ibi_s = np.diff(peak_times_s)
         avg_rr_bpm = 60.0 / np.mean(ibi_s)
-        # Basic check to filter implausible RR (e.g., RR > 35 or RR < 5)
-        if avg_rr_bpm > 35.0 or avg_rr_bpm < 5.0:
-            avg_rr_bpm = 0.0
 
     return avg_rr_bpm, edr_signal[-int(FS * RAW_WAVEFORM_WINDOW_SECONDS):]
 
@@ -207,18 +189,16 @@ def calculate_spo2(ir_signal, red_signal, fs):
 
         if R_ir > 0:
             R = R_red / R_ir
+            # Use empirical linear approximation formula with tunable coefficients
             spo2 = np.clip(SPO2_A - SPO2_B * R, 0.0, 100.0)
-
-    # Filter implausible SpO2 (e.g., if calculation results in 0/100 without reason)
-    if spo2 < 80.0 or spo2 > 100.0:
-        return 0.0, np.zeros(int(FS * RAW_WAVEFORM_WINDOW_SECONDS))
 
     return spo2, ir_ac[-int(FS * RAW_WAVEFORM_WINDOW_SECONDS):]
 
 
+# --- 6. PDS SCORING FUNCTIONS ---
 def get_score_hr(hr):
     """Scores Heart Rate (HR) based on the Weight Distribution table."""
-    if hr <= 0.0: return 0  # Treat 0.0 (error/N/A) as normal range for scoring stability check
+    if hr <= 0.0: return 0
     if 60 <= hr <= 100:
         return 0
     elif (50 <= hr <= 59) or (101 <= hr <= 110):
@@ -273,36 +253,17 @@ def get_score_hrv(hrv):
 
 
 def calculate_pds(hr, rr, spo2, hrv):
-    """
-    Calculates the Patient Deterioration Score (PDS) and determines the triage protocol.
-    """
-    # If any core vital is 0 (due to sensor off/error), skip scoring and mark N/A/Gray.
-    #if hr == 0.0 or rr == 0.0 or spo2 == 0.0:
-        #return {
-         #   "score": 0,
-          #  "classification": "N/A - Sensor Error",
-          #  "color": "gray",
-           # "hr_score": 0,
-            #"rr_score": 0,
-            #"spo2_score": 0,
-            #"hrv_score": 0
-        #}
-
-    # 1. Calculate individual scores
+    """Calculates the Patient Deterioration Score (PDS) and determines the triage protocol."""
     score_hr = get_score_hr(hr)
     score_rr = get_score_rr(rr)
     score_spo2 = get_score_spo2(spo2)
     score_hrv = get_score_hrv(hrv)
 
-    # 2. Total PDS Score
     total_pds_score = score_hr + score_rr + score_spo2 + score_hrv
-
-    # 3. Determine Classification, Triage Protocol, and Color
     classification = "N/A"
     color_code = "gray"
 
-    # Check for Critical Alert condition
-    is_critical_alert = (8 <= total_pds_score <= 12) or (score_hr == 3) or (score_rr == 3) or (score_spo2 == 3) or (
+    is_critical_alert = (8 <= total_pds_score) or (score_hr == 3) or (score_rr == 3) or (score_spo2 == 3) or (
             score_hrv == 3)
 
     if is_critical_alert:
@@ -315,35 +276,29 @@ def calculate_pds(hr, rr, spo2, hrv):
         classification = "Stable/low risk"
         color_code = "Green"
 
-    # Return comprehensive results
-    return {
-        "score": int(total_pds_score),
-        "classification": classification,
-        "color": color_code,
-        "hr_score": score_hr,
-        "rr_score": score_rr,
-        "spo2_score": score_spo2,
-        "hrv_score": score_hrv
-    }
+    return int(total_pds_score), classification, color_code
 
 
-# --- 6. Data Parsing and Buffer Management ---
+# --- END PDS SCORING FUNCTIONS ---
+
+
+# --- 7. Data Parsing and Buffer Management ---
 def parse_and_update_buffer(line):
     """Parses a serial line and updates the circular data buffers."""
     global buffer_index, data_points_received
+
+    if not line:
+        return False
+
     try:
         parts = line.split(',')
         if len(parts) != 6: return False
 
-        # Check for expected non-zero raw data from sensors to skip noisy/empty samples
+        # Parse data values
         ecg_val = float(parts[1])
         ir_val = float(parts[3])
         red_val = float(parts[4])
         temp_val = float(parts[5])
-
-        # Basic Sanity check on raw data to ensure a proper reading
-        if ir_val < 100 or red_val < 100 or ecg_val == 0:
-            return False
 
         data_buffer_ecg[buffer_index] = ecg_val
         data_buffer_ir[buffer_index] = ir_val
@@ -361,76 +316,123 @@ def parse_and_update_buffer(line):
 
 def get_chronological_buffer():
     """Reorders the circular buffer to be chronologically continuous."""
-    # This is the standard, correct way to read a circular buffer
     ecg_c = np.concatenate((data_buffer_ecg[buffer_index:], data_buffer_ecg[:buffer_index]))
     ir_c = np.concatenate((data_buffer_ir[buffer_index:], data_buffer_ir[:buffer_index]))
     red_c = np.concatenate((data_buffer_red[buffer_index:], data_buffer_red[:buffer_index]))
     temp_c = np.concatenate((data_buffer_temp[buffer_index:], data_buffer_temp[:buffer_index]))
-
-    # CRUCIAL FIX: Slice to only include received data points during initialization
-    return (
-        ecg_c[-data_points_received:],
-        ir_c[-data_points_received:],
-        red_c[-data_points_received:],
-        temp_c[-data_points_received:]
-    )
+    return ecg_c, ir_c, red_c, temp_c
 
 
-# --- 7. FIREBASE PUSH FUNCTION ---
-def push_to_firebase(metrics, is_history=False):
+# --- 8. FIREBASE PUSH FUNCTIONS (MODIFIED for e-PCR) ---
+def push_to_firebase(metrics):
     """Pushes the latest metrics object to the Firebase Realtime Database."""
-    global ref_live, ref_history
-    if ref_live is None or ref_history is None: return
+    global ref
+    if ref is None:
+        return
 
     try:
-        if is_history:
-            # PUSH to a dedicated history node using timestamp as the key
-            history_data = {k: v for k, v in metrics.items() if not k.endswith('_waveform') and k != 'waveform_times'}
-
-            # Use timestamp string (ms since epoch) as key for chronological ordering in Firebase
-            key = str(metrics['timestamp'])
-            ref_history.child(key).set(history_data)
-        else:
-            # PUSH to the live vitals node
-            ref_live.set(metrics)
-    except Exception as e:
-        # print(f"ERROR: Failed to push data to Firebase. History: {is_history}. Details: {e}")
-        pass
-
-    # --- 8. FIREBASE STATUS CHECK ---
+        ref.set(metrics)
+    except fb_exceptions.FirebaseError as e:
+        print(f"ERROR: Failed to push data to Firebase (Push): {e}")
 
 
+def push_epcr_to_firebase(metrics):
+    """Pushes a snapshot of all metrics to the dedicated e_pcr_data node."""
+    global ref
+    if ref is None:
+        return
+
+    # Use a child reference to keep a historical log, keyed by timestamp
+    epcr_ref = db.reference('e_pcr_data').child(str(metrics["timestamp"]))
+
+    try:
+        # Create a clean, flat dictionary for the report
+        report_data = {
+            "timestamp_ms": metrics["timestamp"],
+            "patient_id": metrics.get("patient_id", "N/A"),
+            "hr": metrics["hr"],
+            "hrv": metrics["hrv"],
+            "rr": metrics["rr"],
+            "spo2": metrics["spo2"],
+            "temp": metrics["temp"],
+            "pds_score": metrics["pds_score"],
+            "pds_classification": metrics["pds_classification"],
+            "status": metrics["status"],
+            "generated_at": datetime.now().isoformat()
+        }
+
+        epcr_ref.set(report_data)
+        print("-> e-PCR Snapshot Saved")
+    except fb_exceptions.FirebaseError as e:
+        print(f"ERROR: Failed to push data to Firebase (e-PCR): {e}")
+
+
+# --- 9. FIREBASE STATUS CHECK & UTILITIES ---
 def get_vitals_status_from_firebase():
     """Reads the status flag set by the HTML dashboard to control data stream."""
-    global ref_live
-    if ref_live is None: return 'OFFLINE'
+    global ref
+    if ref is None:
+        return 'OFFLINE'
 
     try:
-        status_ref = db.reference(FIREBASE_NODE_LIVE + '/status')
+        status_ref = db.reference(FIREBASE_NODE + '/status')
         status_snapshot = status_ref.get()
         return status_snapshot if status_snapshot else 'OFFLINE'
-    except Exception:
+    except fb_exceptions.FirebaseError as e:
+        print(f"Warning: Failed to read Firebase status: {e}")
         return 'OFFLINE'
 
 
 def get_active_logistics_id():
     """Reads the patient_id from the /logistics node for synchronization."""
-    # NOTE: This is crucial for synchronizing data to the correct patient.
     try:
         logistics_ref = db.reference('logistics/patient_id')
         active_id = logistics_ref.get()
         return active_id if active_id and active_id != '--' else None
-    except Exception as e:
+    except fb_exceptions.FirebaseError:
         return None
 
 
-# --- 9. LOGGING FUNCTION (Local CSV logging removed as per user request) ---
+def check_and_initialize_patient_record(patient_id):
+    """
+    Checks if a patient record exists for the ID found in /logistics.
+    If not, creates a minimal, active record to enable Reception Dashboard's auto-assignment.
+    This handles cases where the monitor sets logistics but doesn't fully register the patient.
+    """
+    if not patient_id:
+        return
+
+    patient_ref = db.reference(f'patients/{patient_id}')
+    patient_record = patient_ref.get()
+
+    # If the patient record does NOT exist or is marked DISCHARGED
+    if not patient_record or patient_record.get('current_room') == 'DISCHARGED':
+        # Fetch logistics data for name/age (optional, use placeholder if missing)
+        logistics_data = db.reference('logistics').get()
+
+        # Create a minimal patient record for auto-assignment
+        patient_ref.set({
+            'id': patient_id,
+            'name': logistics_data.get('patient_name') if logistics_data else f"Ambulance Patient {patient_id}",
+            'age': logistics_data.get('patient_age') if logistics_data else 0,
+            'gender': logistics_data.get('patient_gender') if logistics_data else 'O',
+            'condition': 'Incoming - Vitals Monitor',
+            'is_active': True,  # CRITICAL: Must be True
+            'registration_time': datetime.now().isoformat(),
+            'current_room': '',  # CRITICAL: Must be empty for auto-assignment
+            'assigned_doctor_id': '',
+            'assigned_nurse_id': ''
+        })
+        print(f"--- CREATED PATIENT RECORD {patient_id} for auto-assignment. ---")
 
 
-# --- 10. Serial Data Pipeline Thread (FIXED MAIN LOOP) ---
+# --- END FIREBASE UTILITIES ---
+
+
+# --- 10. Serial Data Pipeline Thread (MODIFIED for e-PCR) ---
 def serial_data_pipeline():
     """Reads serial data, calculates metrics, and updates the Firebase state."""
-    global last_calculation_time, latest_metrics, data_points_received, last_logging_time
+    global last_calculation_time, last_epcr_time, latest_metrics, data_points_received, EPCR_INTERVAL
 
     try:
         ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.01)
@@ -441,6 +443,9 @@ def serial_data_pipeline():
         latest_metrics["status"] = "SERIAL_ERROR"
         push_to_firebase(latest_metrics)
         return
+
+    # Track if we have performed the check for the current active patient
+    last_checked_patient_id = None
 
     while True:
         try:
@@ -455,12 +460,18 @@ def serial_data_pipeline():
             # --- CHECK FOR ACTIVE PATIENT AND CONTROL SIGNAL ---
             active_patient_id = get_active_logistics_id()
             dashboard_status = get_vitals_status_from_firebase()
-            # ---------------------------------------------------
 
-            if dashboard_status != 'LIVE':
-                if latest_metrics["status"] != 'OFFLINE':
-                    latest_metrics["status"] = 'OFFLINE'
-                    push_to_firebase({"status": "OFFLINE", "timestamp": int(current_time * 1000)})
+            # CRITICAL CHECK FOR AMBULATORY REGISTERED PATIENTS
+            if active_patient_id and active_patient_id != last_checked_patient_id:
+                check_and_initialize_patient_record(active_patient_id)
+                last_checked_patient_id = active_patient_id
+
+            # --- Condition 1: Monitor is offline (no patient registered) ---
+            if not active_patient_id:
+                if latest_metrics["status"] != 'MONITOR_OFFLINE':
+                    latest_metrics["status"] = 'MONITOR_OFFLINE'
+                    # Only push minimal status data to save bandwidth
+                    push_to_firebase({"status": "MONITOR_OFFLINE", "timestamp": int(current_time * 1000)})
                 time.sleep(1)
                 continue
 
@@ -468,15 +479,25 @@ def serial_data_pipeline():
             if current_time - last_calculation_time >= CALCULATION_INTERVAL:
                 last_calculation_time = current_time
 
-                # 3. Buffer Check - **MUST** ensure the buffer is full before running calculations
+                # 3. Buffer Check (Logs BUFFERING status until full)
                 if data_points_received < BUFFER_SIZE:
                     latest_metrics["status"] = "BUFFERING"
-                    print(f"Buffer collecting data: {data_points_received}/{BUFFER_SIZE} points...")
+                    # Push buffer status to Firebase so dashboard knows it's waiting
                     push_to_firebase({"status": "BUFFERING", "timestamp": int(current_time * 1000)})
-                    time.sleep(CALCULATION_INTERVAL)
+                    time.sleep(0.01)
                     continue
 
-                # 4. Perform Vitals Calculations
+                # --- Condition 3: Dashboard has gone OFFLINE after buffering finished ---
+                if dashboard_status != 'LIVE':
+                    if latest_metrics["status"] != 'OFFLINE':
+                        latest_metrics["status"] = 'OFFLINE'
+                        push_to_firebase({"status": "OFFLINE", "timestamp": int(current_time * 1000)})
+                    time.sleep(1)
+                    continue
+
+                # --- CODE REACHES HERE ONLY IF BUFFER IS FULL AND STATUS IS LIVE ---
+
+                # 4. Perform Calculations
                 ecg_c, ir_c, red_c, temp_c = get_chronological_buffer()
 
                 avg_hr, rmssd, ecg_waveform = calculate_hr_hrv(ecg_c, FS)
@@ -484,43 +505,33 @@ def serial_data_pipeline():
                 spo2_val, ppg_waveform = calculate_spo2(ir_c, red_c, FS)
                 avg_temp = np.mean(temp_c)
 
-                # 4b. Perform PDS Calculation
-                pds_results = calculate_pds(avg_hr, avg_rr, spo2_val, rmssd)
+                # --- PDS Calculation ---
+                pds_score, pds_classification, pds_color = calculate_pds(avg_hr, avg_rr, spo2_val, rmssd)
+                # -----------------------
 
-                # 5. Update Local Metrics (Rounding final output values)
+                # 5. Update Local Metrics (and prepare for push)
                 latest_metrics["timestamp"] = int(current_time * 1000)
-                latest_metrics["patient_id"] = active_patient_id  # Sync Patient ID to live node
-                latest_metrics["hr"] = round(avg_hr, 1) if avg_hr > 0 else 0.0
-                latest_metrics["hrv"] = round(rmssd, 2) if rmssd > 0 else 0.0
-                latest_metrics["rr"] = round(avg_rr, 2) if avg_rr > 0 else 0.0
-                latest_metrics["spo2"] = round(spo2_val, 1) if spo2_val > 0 else 0.0
-                latest_metrics["temp"] = round(avg_temp, 2) if avg_temp > 0 else 0.0
-                latest_metrics["pds_score"] = pds_results["score"]
-                latest_metrics["pds_classification"] = pds_results["classification"]
-                latest_metrics["pds_color"] = pds_results["color"]
-
-                # NEW: Add individual scores to metrics (crucial for history)
-                latest_metrics["hr_score"] = pds_results["hr_score"]
-                latest_metrics["rr_score"] = pds_results["rr_score"]
-                latest_metrics["spo2_score"] = pds_results["spo2_score"]
-                latest_metrics["hrv_score"] = pds_results["hrv_score"]
-
+                latest_metrics["patient_id"] = active_patient_id
+                latest_metrics["hr"] = round(avg_hr, 1)
+                latest_metrics["hrv"] = round(rmssd, 2)
+                latest_metrics["rr"] = round(avg_rr, 2)
+                latest_metrics["spo2"] = round(spo2_val, 1)
+                latest_metrics["temp"] = round(avg_temp, 2)
+                latest_metrics["pds_score"] = pds_score
+                latest_metrics["pds_classification"] = pds_classification
+                latest_metrics["pds_color"] = pds_color
                 latest_metrics["ecg_waveform"] = ecg_waveform.tolist()
                 latest_metrics["ppg_waveform"] = ppg_waveform.tolist()
                 latest_metrics["rr_waveform"] = rr_waveform.tolist()
                 latest_metrics["status"] = "LIVE"
 
-                # 6. PUSH LIVE DATA TO FIREBASE
-                push_to_firebase(latest_metrics, is_history=False)
+                # 6. PUSH TO FIREBASE (LIVE VITALS)
+                push_to_firebase(latest_metrics)
 
-                # 7. LOG DATA TO FIREBASE HISTORY NODE
-                if current_time - last_logging_time >= LOGGING_INTERVAL:
-                    # Use a copy of the metrics that excludes waveform data
-                    history_metrics = {k: v for k, v in latest_metrics.items() if
-                                       not k.endswith('_waveform') and k != 'waveform_times'}
-                    push_to_firebase(history_metrics, is_history=True)
-                    last_logging_time = current_time
-                    print(f"--- Data Logged to Firebase History ---")
+                # 7. e-PCR SNAPSHOT (30-second interval)
+                if current_time - last_epcr_time >= EPCR_INTERVAL and latest_metrics["status"] == "LIVE":
+                    last_epcr_time = current_time
+                    push_epcr_to_firebase(latest_metrics)
 
                 print(
                     f"| HR: {latest_metrics['hr']} BPM | RR: {latest_metrics['rr']} BPM | SpO2: {latest_metrics['spo2']}% | PDS: {latest_metrics['pds_score']} ({latest_metrics['pds_color']}) | -> Data Sent")
@@ -528,7 +539,7 @@ def serial_data_pipeline():
             time.sleep(0.001)
 
         except Exception as e:
-            # Reopen the serial port if it fails due to permission/connection issues
+            # Reopening serial connection on failure
             if "Access is denied" in str(e) or "ClearCommError" in str(e) or "device reports readiness failure" in str(
                     e):
                 print(f"SERIAL CONNECTION INTERRUPTED: Attempting to reconnect on {SERIAL_PORT}...")
@@ -556,6 +567,9 @@ def serial_data_pipeline():
 
 if __name__ == '__main__':
     print("--- Ambulatory Data Sender Initializing ---")
+
+    # If there is a patient ID in logistics that wasn't properly registered,
+    # the check will handle it when the loop starts.
 
     # Start the serial data pipeline in a separate thread
     data_thread = threading.Thread(target=serial_data_pipeline, daemon=True)
