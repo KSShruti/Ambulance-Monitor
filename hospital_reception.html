@@ -6,11 +6,11 @@
     <title>Hospital Reception System (Firebase RTDB)</title>
     <script src="https://cdn.tailwindcss.com"></script>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
-
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
 
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #f4f4f4; }
@@ -39,6 +39,10 @@
         <div class="column">
             <h2 class="text-lg font-semibold mb-3">Patient Register <span id="active-patient-id" class="text-sm font-normal text-blue-500 ml-2"></span></h2>
             <button id="add-patient-btn" class="w-full bg-blue-500 text-white text-sm py-1 rounded mb-3 hover:bg-blue-600">Add Patient</button>
+
+            <button id="epcr-export-btn" class="w-full bg-yellow-500 text-white text-sm py-1 rounded mb-3 hover:bg-yellow-600 disabled:bg-gray-400" disabled>
+                📄 Export e-PCR (30s Snapshot)
+            </button>
             <div id="patient-list" class="space-y-2 text-sm">
                 <p class="text-gray-500">Connecting to Firebase...</p>
             </div>
@@ -65,7 +69,6 @@
                 <div class="p-3 border rounded text-center"><span class="block text-xs text-gray-500">Temp (°C)</span><span id="temp-value" class="text-3xl font-bold text-red-500">--</span></div>
                 <div class="p-3 border rounded text-center"><span class="block text-xs text-gray-500">HRV (ms)</span><span id="hrv-value" class="text-3xl font-bold text-purple-600">--</span></div>
             </div>
-
             <h3 class="text-md font-semibold mt-4 mb-2 border-t pt-2">Current Assignment</h3>
             <div id="current-assignment-display" class="space-y-1 text-sm bg-gray-50 p-2 rounded">
                 <p id="assigned-room-name"><span class="font-medium text-gray-600">Room:</span> --</p>
@@ -74,14 +77,9 @@
                 <p id="assigned-nurse-name"><span class="font-medium text-gray-600">Nurse:</span> --</p>
             </div>
 
-            <div class="flex gap-2 mt-4">
-                <button id="generate-pdf-btn" class="w-1/2 bg-gray-600 text-white py-2 rounded hover:bg-gray-700 disabled:bg-gray-400" disabled>
-                    📄 Generate EPCR PDF
-                </button>
-                <button id="discharge-patient-btn" class="w-1/2 bg-green-500 text-white py-2 rounded hover:bg-green-600 disabled:bg-gray-400" disabled>
-                    ✅ Discharge Patient
-                </button>
-            </div>
+            <button id="discharge-patient-btn" class="w-full bg-green-500 text-white py-2 rounded mt-4 hover:bg-green-600 disabled:bg-gray-400" disabled>
+                ✅ Discharge Patient
+            </button>
             </div>
 
         <div class="column">
@@ -187,7 +185,7 @@
         const db = app.database();
         const dbRef = db.ref('/'); // Reference to the root of the database
         const vitalsRef = db.ref('vitals'); // Dedicated reference for real-time vitals
-        const historyRef = db.ref('vitals_history'); // Reference for historical data
+        const epcrRef = db.ref('e_pcr_data'); // NEW: Dedicated reference for e-PCR snapshots
 
         // Global State (Updated by Firebase listener)
         let currentPatientId = null;
@@ -195,7 +193,8 @@
         let allRoomsData = {};
         let vitalsData = {};
         let allPatientsData = {};
-        let logisticsData = {}; // <-- Global state for logistics data
+        let logisticsData = {};
+        let epcrData = {}; // NEW: Global state for e-PCR data
 
         // --- FIREBASE UTILITIES ---
 
@@ -265,18 +264,15 @@
                     // <-- ADDED ETA PLACEHOLDERS -->
                     eta_minutes: '--',
                     estimated_arrival_time: '--',
-                    updated_at: new Date().toISOString(),
-                    // <-- NEW: EPCR PLACEHOLDERS -->
-                    moi: '--', // Mechanism of Injury
-                    initial_assessment: '--',
-                    emt_notes: '--'
+                    updated_at: new Date().toISOString()
                 },
                  er_resources: {
                     trauma_bay_1: 'AVAILABLE',
                     resus_bed_a: 'AVAILABLE',
                     isolation_room: 'AVAILABLE',
                     monitor_cart: 'AVAILABLE',
-                }
+                },
+                e_pcr_data: {} // NEW: Node for historical vitals snapshots
             };
         }
 
@@ -311,15 +307,6 @@
             return (allStaffData[staffKey] && allStaffData[staffKey][id]?.name) || id;
         }
 
-        function formatTimestamp(timestampMs) {
-            if (!timestampMs) return '--';
-            const date = new Date(parseInt(timestampMs));
-            const hours = date.getHours().toString().padStart(2, '0');
-            const minutes = date.getMinutes().toString().padStart(2, '0');
-            const seconds = date.getSeconds().toString().padStart(2, '0');
-            return `${hours}:${minutes}:${seconds}`;
-        }
-
         // --- MAIN REAL-TIME LISTENER ---
 
         function renderDashboardFromFirebase(snapshot) {
@@ -336,11 +323,14 @@
             allStaffData = db.staff || getInitialData().staff;
             allRoomsData = db.er_rooms || getInitialData().er_rooms;
             allPatientsData = db.patients || {};
-            logisticsData = db.logistics || getInitialData().logistics; // <-- FETCH LOGISTICS DATA
+            logisticsData = db.logistics || getInitialData().logistics;
+            // epcrData is updated by its own listener, but for first load fallback is safe:
+            epcrData = db.e_pcr_data || {};
+
 
             // 2. Render UI (Structural/Assignment updates)
             // Call renderVitals here to set initial/default state using the stored vitalsData
-            renderVitals(vitalsData); // Note: Vitals data is updated asynchronously by startRealTimeVitalsListener
+            renderVitals(vitalsData);
             renderPatientList(db.patients);
             renderCurrentAssignment(currentPatientId, allRoomsData, allStaffData, db.patients);
 
@@ -352,8 +342,9 @@
 
             renderManagementStaffList(allStaffData);
 
-            // ⭐ Call the dedicated Discharge and PDF Button handler
-            updateActionButtonsStatus();
+            // ⭐ Call the dedicated button handlers
+            updateDischargeButtonStatus();
+            updateEpcrButtonStatus(currentPatientId); // Ensure e-PCR button is enabled/disabled correctly
         }
 
         // --- NEW: DEDICATED REAL-TIME VITALS LISTENER ---
@@ -363,16 +354,16 @@
                 if (liveVitals) {
                     vitalsData = liveVitals; // Update global state
                     // Immediately re-render the vitals section with the new data
-                    // FIX: Only re-render if the patient ID in live data matches the selected patient.
-                    if (currentPatientId && liveVitals.patient_id === currentPatientId) {
-                        renderVitals(vitalsData);
-                    } else if (!currentPatientId) {
-                         // Reset vitals if no patient is selected
-                        renderVitals(null);
-                    }
+                    renderVitals(vitalsData);
                 }
             }, (error) => {
                 console.error("Firebase Vitals Listener Failed:", error);
+            });
+
+            // NEW: Listener for e-PCR data
+            epcrRef.on('value', (snapshot) => {
+                epcrData = snapshot.val() || {};
+                // The e-PCR button status is checked in the main render loop, but this ensures fresh data.
             });
         }
 
@@ -380,31 +371,32 @@
         // --- RENDER FUNCTIONS ---
 
         /**
-         * Explicitly enables/disables the Discharge and PDF buttons based on selected patient's status.
+         * Explicitly enables/disables the Discharge button based on selected patient's status.
          */
-        function updateActionButtonsStatus() {
+        function updateDischargeButtonStatus() {
             const dischargeButton = document.getElementById('discharge-patient-btn');
-            const pdfButton = document.getElementById('generate-pdf-btn');
 
             // Check global state: currentPatientId and its assignment status
             const patient = currentPatientId ? allPatientsData[currentPatientId] : null;
 
             let isAssigned = false;
-            let canGeneratePdf = false;
-
-            if (currentPatientId && patient) {
-                // Discharge enabled ONLY if patient is active and assigned to a room
-                if (patient.is_active && patient.current_room && patient.current_room !== 'DISCHARGED') {
-                     isAssigned = true;
-                }
-                // PDF generation enabled if patient is selected (active or discharged)
-                if (patient.is_active || patient.current_room === 'DISCHARGED') {
-                    canGeneratePdf = true;
-                }
+            // The button should be enabled ONLY if a patient is selected AND they are assigned to a room (not 'DISCHARGED').
+            if (currentPatientId && patient && patient.current_room && patient.current_room !== 'DISCHARGED') {
+                 isAssigned = true;
             }
 
             dischargeButton.disabled = !isAssigned;
-            pdfButton.disabled = !canGeneratePdf;
+        }
+
+        /**
+         * Explicitly enables/disables the e-PCR button.
+         */
+        function updateEpcrButtonStatus(patientId) {
+            const epcrBtn = document.getElementById('epcr-export-btn');
+
+            // Enable ONLY if a patient is selected AND the logistics patient matches (meaning they are the one currently monitored)
+            const isMonitoredPatient = logisticsData.patient_id === patientId;
+            epcrBtn.disabled = !(patientId && isMonitoredPatient);
         }
 
 
@@ -529,29 +521,11 @@
                 return;
             }
 
-            // REVISED FILTER: Include all ACTIVE patients OR the CURRENTLY SELECTED patient, even if DISCHARGED.
-            const displayPatientsArray = Object.values(patientsData).filter(patient => {
-                // Keep active patients
-                if (patient.is_active) {
-                    return true;
-                }
-                // Keep the currently selected patient, even if discharged, for PDF generation
-                if (patient.id === currentPatientId) {
-                    return true;
-                }
-                // Filter out all other discharged/inactive patients
-                return false;
-            });
+            // Filter to only include ACTIVE patients (is_active: true)
+            const activePatientsArray = Object.values(patientsData).filter(patient => patient.is_active);
 
-            const patientArray = displayPatientsArray.sort((a, b) => {
-                // Sort by active status first (active > discharged) then by time (newest first)
-                if (a.is_active && !b.is_active) return -1;
-                if (!a.is_active && b.is_active) return 1;
-
-                const aTime = new Date(a.registration_time).getTime();
-                const bTime = new Date(b.registration_time).getTime();
-
-                return bTime - aTime;
+            const patientArray = activePatientsArray.sort((a, b) => {
+                return new Date(a.registration_time) - new Date(b.registration_time);
             });
 
             if (patientArray.length === 0) {
@@ -564,32 +538,24 @@
 
             patientArray.forEach(patient => {
                 const isSelected = patient.id === currentPatientId;
-                let statusColor, statusText;
+                const statusColor = patient.current_room ? 'border-green-500 bg-green-50' : 'border-blue-500';
+                const statusText = patient.current_room ? `Assigned to ${patient.current_room}` : 'Awaiting Assignment';
 
-                if (patient.current_room === 'DISCHARGED') {
-                    statusColor = 'border-gray-500 bg-gray-100';
-                    statusText = 'DISCHARGED';
-                } else if (patient.current_room) {
-                    statusColor = 'border-green-500 bg-green-50';
-                    statusText = `Assigned to ${patient.current_room}`;
-                } else {
-                    statusColor = 'border-blue-500';
-                    statusText = 'Awaiting Assignment';
-                }
-
-                const condition = patient.condition || 'N/A';
+                // Determine if this patient is the one being monitored by the ambulance for visual cue
+                const isMonitored = logisticsData.patient_id === patient.id;
 
                 listElement.innerHTML += `
                     <div class="p-2 border ${statusColor} rounded cursor-pointer hover:bg-gray-100 ${isSelected ? 'bg-blue-100' : ''}"
                          onclick="selectPatient('${patient.id}', '${patient.name}')">
                         <span class="font-medium">${patient.name} (${patient.age}/${patient.gender})</span>
-                        <span class="block text-xs text-gray-500">PID: ${patient.id} - ${condition} (<span class="font-semibold">${statusText}</span>)</span>
+                        <span class="block text-xs text-gray-500">PID: ${patient.id} - ${patient.condition} (<span class="font-semibold">${statusText}</span>)
+                        ${isMonitored ? '<span class="text-red-500 font-bold ml-1">| AMBULANCE MONITORING</span>' : ''}</span>
                     </div>
                 `;
             });
 
             if (currentPatientId) {
-                const selectedPatient = allPatientsData[currentPatientId];
+                const selectedPatient = patientArray.find(p => p.id === currentPatientId);
                 document.getElementById('vitals-patient-name').textContent = selectedPatient ? `(${selectedPatient.name})` : '';
             } else {
                 document.getElementById('vitals-patient-name').textContent = '';
@@ -656,16 +622,8 @@
             // NEW: ETA Element
             const etaEl = document.getElementById('eta-reception-value');
 
-            // REMOVED: EPCR Elements (Now only used for logistics check, not rendering)
-            /*
-            const epcrMoiEl = document.getElementById('epcr-moi');
-            const epcrAssessmentEl = document.getElementById('epcr-assessment');
-            const epcrNotesEl = document.getElementById('epcr-notes');
-            */
 
-
-            // Check: If data is null OR if the data doesn't belong to the currently selected patient
-            if (!data || !currentPatientId || data.patient_id !== currentPatientId) {
+            if (!data || !currentPatientId) {
                  hrValueEl.textContent = '--';
                  spo2ValueEl.textContent = '--';
                  rrValueEl.textContent = '--';
@@ -685,19 +643,12 @@
                  etaEl.classList.remove('text-green-700');
                  etaEl.classList.add('text-blue-700');
 
-                 // REMOVED EPCR RENDERING LOGIC
-                 /*
-                 epcrMoiEl.innerHTML = `<span class="font-medium text-gray-600">Mech. of Injury:</span> <span class="font-bold text-red-600">--</span>`;
-                 epcrAssessmentEl.innerHTML = `<span class="font-medium text-gray-600">Initial Assessment:</span> --`;
-                 epcrNotesEl.innerHTML = `<span class="font-medium text-gray-600">EMT Notes:</span> --`;
-                 */
 
-
-                 document.getElementById('active-patient-id').textContent = '(Vitals Offline)'; // Reset to generic message
+                 document.getElementById('active-patient-id').textContent = '(Select Patient)';
                  return;
             }
 
-            const patient = allPatientsData[currentPatientId]; // Note: This check relies on patient still existing/being selected.
+            const patient = allPatientsData[currentPatientId];
 
             // --- NEW: ETA Logic ---
             let etaDisplay = '--';
@@ -719,29 +670,11 @@
                     etaDisplay = `${etaT || 'TBD'} (${etaMinutesNum} min)`;
                 }
             } else {
-                // Patient selected but not the one being actively monitored/tracked by the ambulance
+                // Not the patient currently being monitored by the ambulance
                 etaDisplay = '--';
             }
             etaEl.textContent = etaDisplay;
             // --- END NEW: ETA Logic ---
-
-            // --- REMOVED: EPCR RENDERING LOGIC ---
-            /*
-            if (logisticsData.patient_id === currentPatientId) {
-                const moi = logisticsData.moi || '--';
-                const assessment = logisticsData.initial_assessment || '--';
-                const notes = logisticsData.emt_notes || '--';
-
-                epcrMoiEl.innerHTML = `<span class="font-medium text-gray-600">Mech. of Injury:</span> <span class="font-bold text-red-600">${moi}</span>`;
-                epcrAssessmentEl.innerHTML = `<span class="font-medium text-gray-600">Initial Assessment:</span> ${assessment}`;
-                epcrNotesEl.innerHTML = `<span class="font-medium text-gray-600">EMT Notes:</span> ${notes}`;
-            } else {
-                 epcrMoiEl.innerHTML = `<span class="font-medium text-gray-600">Mech. of Injury:</span> <span class="font-bold text-red-600">--</span>`;
-                 epcrAssessmentEl.innerHTML = `<span class="font-medium text-gray-600">Initial Assessment:</span> --`;
-                 epcrNotesEl.innerHTML = `<span class="font-medium text-gray-600">EMT Notes:</span> --`;
-            }
-            */
-            // --- END REMOVED: EPCR Logic ---
 
 
             // Check for PDS score and color
@@ -760,7 +693,11 @@
             }
 
 
-            if (data.status === 'LIVE' && patient.current_room !== 'DISCHARGED') {
+            // The Vitals data must match the currently selected patient AND the vitals status must be LIVE/BUFFERING
+            const isVitalsRelevant = logisticsData.patient_id === currentPatientId && (data.status === 'LIVE' || data.status === 'BUFFERING');
+
+
+            if (isVitalsRelevant && patient.current_room !== 'DISCHARGED') {
                 // Update Vitals (Real-Time values)
                 hrValueEl.textContent = data.hr || '--';
                 spo2ValueEl.textContent = data.spo2 || '--';
@@ -782,7 +719,7 @@
 
                 document.getElementById('active-patient-id').textContent = `(PID: ${currentPatientId} - Live)`;
             } else {
-                // If status is OFFLINE (or patient is discharged), display placeholders and update PDS color
+                // If status is OFFLINE, irrelevant patient, or discharged: display placeholders
                 hrValueEl.textContent = '--';
                 spo2ValueEl.textContent = '--';
                 rrValueEl.textContent = '--';
@@ -795,146 +732,7 @@
                 pdsCardEl.classList.remove('bg-red-100', 'bg-yellow-100', 'bg-green-100');
                 pdsCardEl.classList.add('bg-white');
 
-                document.getElementById('active-patient-id').textContent = '(Vitals Offline)';
-            }
-        }
-
-        // --- PDF GENERATION LOGIC ---
-
-        window.generateEpcrPdf = async function() {
-            if (!currentPatientId) {
-                alert("Please select a patient to generate the EPCR.");
-                return;
-            }
-
-            const pdfButton = document.getElementById('generate-pdf-btn');
-            pdfButton.disabled = true;
-            pdfButton.textContent = 'Generating PDF...';
-
-            const patient = allPatientsData[currentPatientId];
-            if (!patient) {
-                alert("Patient data not found.");
-                pdfButton.disabled = false;
-                pdfButton.textContent = '📄 Generate EPCR PDF';
-                return;
-            }
-
-            try {
-                // 1. Fetch historical vitals data for the selected patient
-                const snapshot = await historyRef.orderByChild('patient_id').equalTo(currentPatientId).once('value');
-                const historyData = snapshot.val();
-
-                if (!historyData) {
-                    alert(`No historical vitals found for Patient ${currentPatientId}.`);
-                    return;
-                }
-
-                // 2. Prepare Table Data (Headers and Body)
-                const headers = [
-                    { title: "Time", dataKey: "time" },
-                    { title: "HR", dataKey: "hr" },
-                    { title: "SpO₂", dataKey: "spo2" },
-                    { title: "RR", dataKey: "rr" },
-                    { title: "HRV", dataKey: "hrv" },
-                    { title: "Temp", dataKey: "temp" },
-                    { title: "PDS", dataKey: "pds_score" }
-                ];
-
-                // Convert Firebase object to an array of table rows
-                const dataArray = Object.values(historyData).filter(item => item.patient_id === currentPatientId);
-                dataArray.sort((a, b) => a.timestamp - b.timestamp); // Sort by timestamp ascending
-
-                const tableBody = dataArray.map(item => ({
-                    time: formatTimestamp(item.timestamp),
-                    hr: item.hr.toFixed(1) || '--',
-                    spo2: item.spo2.toFixed(1) || '--',
-                    rr: item.rr.toFixed(2) || '--',
-                    hrv: item.hrv.toFixed(2) || '--',
-                    temp: item.temp.toFixed(2) || '--',
-                    pds_score: item.pds_score.toString()
-                }));
-
-                // 3. Initialize jsPDF
-                // A4 size, portrait orientation
-                const { jsPDF } = window.jspdf;
-                const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
-
-                // --- Document Header ---
-                let yPos = 10;
-                doc.setFontSize(16);
-                doc.text("Patient Care Report (e-PCR)", 105, yPos, { align: 'center' });
-                yPos += 8;
-
-                doc.setFontSize(10);
-                doc.text(`Patient ID: ${patient.id}`, 10, yPos);
-                doc.text(`Name: ${patient.name}`, 50, yPos);
-                doc.text(`Age: ${patient.age}`, 100, yPos);
-                doc.text(`Condition: ${patient.condition || 'N/A'}`, 130, yPos);
-                yPos += 5;
-
-                const dischargeInfo = patient.current_room === 'DISCHARGED' ? `Discharged From: ${patient.current_room} @ ${new Date(patient.discharge_time).toLocaleString()}` : 'Active Monitoring';
-                doc.text(dischargeInfo, 10, yPos);
-                yPos += 6;
-
-                doc.line(10, yPos, 200, yPos); // Horizontal line
-                yPos += 4;
-
-                // --- REMOVED: EPCR/Initial Assessment from PDF ---
-                /*
-                doc.setFontSize(12);
-                doc.text("Initial Assessment (EMT Report)", 10, yPos);
-                yPos += 5;
-
-                const epcrMoi = logisticsData.moi || 'Not recorded';
-                const epcrAssessment = logisticsData.initial_assessment || 'Not recorded';
-                const epcrNotes = logisticsData.emt_notes || 'Not recorded';
-
-                doc.setFontSize(9);
-                doc.text(`Mechanism of Injury (MOI): ${epcrMoi}`, 10, yPos);
-                yPos += 4;
-                doc.text(`Initial Assessment: ${epcrAssessment}`, 10, yPos);
-                yPos += 4;
-                doc.text(`EMT Notes: ${epcrNotes}`, 10, yPos);
-                yPos += 6;
-                doc.line(10, yPos, 200, yPos); // Horizontal line
-                yPos += 4;
-                */
-                // --- END REMOVAL ---
-
-                // --- Vitals Table ---
-                doc.setFontSize(12);
-                doc.text("Ambulatory Vitals History", 10, yPos);
-                yPos += 2;
-
-                doc.autoTable({
-                    head: [headers.map(h => h.title)],
-                    body: tableBody.map(row => Object.values(row)),
-                    startY: yPos + 4,
-                    theme: 'grid',
-                    headStyles: { fillColor: [30, 41, 59], fontSize: 8 }, // Slate-800 background
-                    styles: { fontSize: 7, cellPadding: 1, overflow: 'linebreak' },
-                    columnStyles: {
-                        0: { cellWidth: 18 }, // Time
-                        1: { cellWidth: 15 }, // HR
-                        2: { cellWidth: 15 }, // SpO2
-                        3: { cellWidth: 15 }, // RR
-                        4: { cellWidth: 15 }, // HRV
-                        5: { cellWidth: 15 }, // Temp
-                        6: { cellWidth: 15 }  // PDS
-                    }
-                });
-
-                // 4. Save the PDF
-                const filename = `ePCR_${patient.id}_${new Date().toISOString().slice(0, 10)}.pdf`;
-                doc.save(filename);
-
-
-            } catch (error) {
-                console.error("PDF Generation Failed:", error);
-                alert("Failed to generate PDF. Check console for details.");
-            } finally {
-                pdfButton.disabled = false;
-                pdfButton.textContent = '📄 Generate EPCR PDF';
+                document.getElementById('active-patient-id').textContent = `(PID: ${currentPatientId} - Vitals Offline)`;
             }
         }
 
@@ -1078,13 +876,25 @@ async function autoAssignPatient(patientId) {
 
     // Search the required triage category for an available room
     const targetRoomsArray = Array.isArray(allRoomsDataFresh[requiredTriageCategory]) ? allRoomsDataFresh[requiredTriageCategory] : Object.values(allRoomsDataFresh[requiredTriageCategory] || {});
-    const roomIndex = targetRoomsArray.findIndex(r => r.status === 'AVAILABLE');
+    // NOTE: rooms in Firebase arrays (critical, urgent, less_urgent) are accessed by index
+    let roomIndex = -1;
+    let roomToAssign = null;
 
-    if (roomIndex !== -1) {
+    // Find the available room object and its index in the array
+    for (let i = 0; i < targetRoomsArray.length; i++) {
+        if (targetRoomsArray[i].status === 'AVAILABLE') {
+            roomIndex = i;
+            roomToAssign = targetRoomsArray[i];
+            break;
+        }
+    }
+
+
+    if (roomIndex !== -1 && roomToAssign) {
         foundRoomAssignment = {
             triage: requiredTriageCategory,
             index: roomIndex,
-            room: targetRoomsArray[roomIndex]
+            room: roomToAssign
         };
     } else {
         console.warn(`No room available in the required ${requiredTriageCategory.toUpperCase()} Triage category.`);
@@ -1149,16 +959,12 @@ async function autoAssignPatient(patientId) {
             updated_at: new Date().toISOString(),
             // Preserving ETA fields from the monitor's registration step (from the fresh logistics snapshot)
             eta_minutes: logistics.eta_minutes || '--',
-            estimated_arrival_time: logistics.estimated_arrival_time || '--',
-            // NEW: Preserving EPCR fields
-            moi: logistics.moi || '--',
-            initial_assessment: logistics.initial_assessment || '--',
-            emt_notes: logistics.emt_notes || '--'
+            estimated_arrival_time: logistics.estimated_arrival_time || '--'
         };
 
         await dbRef.update(updates);
         alert(`AUTOMATED ASSIGNMENT: Patient ${patientId} assigned to ${room.id} (${triage.toUpperCase()})! Triage based on PDS Score: ${pdsScore}.`);
-        currentPatientId = null; // Deselect patient after assignment
+        currentPatientId = patientId; // Select the newly assigned patient
 
         // Trigger immediate UI refresh after successful assignment
         dbRef.once('value', renderDashboardFromFirebase);
@@ -1198,6 +1004,7 @@ async function autoAssignPatient(patientId) {
                 let roomTriageCategory = null;
                 let roomIndex = -1;
 
+                // Find the room index for the batch update
                 for (const triage in allRoomsData) {
                     const roomsArray = Array.isArray(allRoomsData[triage]) ? allRoomsData[triage] : Object.values(allRoomsData[triage] || {});
                     roomIndex = roomsArray.findIndex(r => r.assigned_patient_id === patientId);
@@ -1230,7 +1037,7 @@ async function autoAssignPatient(patientId) {
 
                 // B. Free up Staff
                 const staffUpdate = { status: 'AVAILABLE', current_assignment_room_id: '', current_assignment_patient_id: '' };
-                if (paramedicId) updates[`staff/paramedics/${paramedicId}`] = {...allStaffData.paramedics[paramamedicId], ...staffUpdate};
+                if (paramedicId) updates[`staff/paramedics/${paramedicId}`] = {...allStaffData.paramedics[paramedicId], ...staffUpdate};
                 if (doctorId) updates[`staff/doctors/${doctorId}`] = {...allStaffData.doctors[doctorId], ...staffUpdate};
                 if (nurseId) updates[`staff/nurses/${nurseId}`] = {...allStaffData.nurses[nurseId], ...staffUpdate};
 
@@ -1244,8 +1051,11 @@ async function autoAssignPatient(patientId) {
                 };
                 updates[`patients/${patientId}`] = {...patient, ...patientUpdate};
 
-                // D. Reset Logistics Node
+                // D. Reset Logistics Node (This also stops the Ambulatory Monitor from streaming vitals)
                 updates['logistics'] = getInitialData().logistics;
+
+                // E. Reset Vitals Status to OFF
+                updates['vitals'] = { status: 'OFFLINE' };
 
                 // Perform the batch update
                 await dbRef.update(updates);
@@ -1261,7 +1071,7 @@ async function autoAssignPatient(patientId) {
             } finally {
                 dischargeButton.textContent = '✅ Discharge Patient';
                 dischargeButton.disabled = false;
-                // Keep currentPatientId selected so the PDF button remains active for the just-discharged patient.
+                currentPatientId = null;
             }
         }
 
@@ -1312,20 +1122,87 @@ async function handlePatientRegistration() {
     }
 }
 
+/**
+ * Generates a PDF report from the e-PCR snapshots for the currently selected patient.
+ */
+async function exportEpcrData() {
+    const patientId = currentPatientId;
+    const patient = allPatientsData[patientId];
+
+    if (!patientId || !patient) {
+        alert("Please select an active patient to export the e-PCR data.");
+        return;
+    }
+
+    // 1. Filter e-PCR data for the selected patient
+    // e_pcr_data structure is {timestamp: {snapshot}, ...}
+    const patientEpcrSnapshots = Object.values(epcrData).filter(
+        snapshot => snapshot.patient_id === patientId
+    );
+
+    // Sort snapshots chronologically
+    patientEpcrSnapshots.sort((a, b) => a.timestamp_ms - b.timestamp_ms);
+
+
+    if (patientEpcrSnapshots.length === 0) {
+        alert("No e-PCR snapshots available for this patient. Wait for the Python script to log data (30 seconds) or ensure the correct patient is actively monitored.");
+        return;
+    }
+
+    // Initialize jsPDF
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+
+    // --- Header ---
+    doc.setFontSize(18);
+    doc.text("Ambulance e-PCR Report", 10, 15);
+    doc.setFontSize(12);
+    doc.text(`Patient: ${patient.name} (${patientId})`, 10, 25);
+    doc.text(`Condition: ${patient.condition}`, 10, 30);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 10, 35);
+
+    // --- Summary Table Data ---
+    const head = [
+        ['Time', 'HR (BPM)', 'RR (BPM)', 'SpO₂ (%)', 'Temp (°C)', 'HRV (ms)', 'PDS Score', 'Triage']
+    ];
+
+    const body = patientEpcrSnapshots.map(snapshot => [
+        new Date(snapshot.timestamp_ms).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'}),
+        snapshot.hr,
+        snapshot.rr,
+        snapshot.spo2,
+        snapshot.temp,
+        snapshot.hrv,
+        snapshot.pds_score,
+        snapshot.pds_classification
+    ]);
+
+    // --- AutoTable (using jspdf-autotable plugin) ---
+    doc.autoTable({
+        startY: 40,
+        head: head,
+        body: body,
+        theme: 'striped',
+        headStyles: { fillColor: [52, 73, 94] },
+        styles: { fontSize: 8, cellPadding: 1 },
+        columnStyles: {
+            0: { cellWidth: 20 }, // Time
+            6: { fontStyle: 'bold' } // PDS Score
+        }
+    });
+
+    // --- Output ---
+    doc.save(`ePCR_Report_${patientId}_${new Date().toISOString().substring(0, 10)}.pdf`);
+    console.log(`e-PCR Report for ${patientId} successfully generated with ${patientEpcrSnapshots.length} snapshots.`);
+}
 
         // --- EVENT HANDLERS ---
 
         window.selectPatient = function(patientId, patientName) {
             if (currentPatientId === patientId) {
-                // If the same patient is clicked, deselect
                 currentPatientId = null;
-                // Force reset of Vitals display
-                renderVitals(null);
             } else {
                 currentPatientId = patientId;
-                // Trigger a check to immediately render Vitals using the latest global state (vitalsData)
-                // This ensures the Vitals/EPCR block updates instantly upon selection.
-                renderVitals(vitalsData);
             }
             // Manually force a UI redraw on patient selection to ensure immediate feedback
             dbRef.once('value', renderDashboardFromFirebase);
@@ -1347,7 +1224,7 @@ async function handlePatientRegistration() {
                 alert("Connection to Realtime Database failed. Check console and configuration.");
             });
 
-            // 2. Dedicated Vitals listener (for real-time metric updates)
+            // 2. Dedicated Vitals listener & ePCR listener
             startRealTimeVitalsListener();
 
 
@@ -1372,7 +1249,7 @@ async function handlePatientRegistration() {
 
             // Core Logic Handlers
             document.getElementById('discharge-patient-btn').addEventListener('click', dischargePatient);
-            document.getElementById('generate-pdf-btn').addEventListener('click', generateEpcrPdf);
+            document.getElementById('epcr-export-btn').addEventListener('click', exportEpcrData);
         });
 
     </script>
