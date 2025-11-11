@@ -142,16 +142,13 @@
         </div>
 
         <div class="flex items-center gap-4">
-            <!-- NEW: ETA Display -->
             <div class="text-base font-semibold text-right">
                 <p class="text-sm font-normal text-gray-500">
                     <span class="font-semibold text-gray-700">ETA:</span>
                     <span id="eta-value" class="font-bold text-blue-700">--</span>
                 </p>
             </div>
-            <!-- End NEW: ETA Display -->
-
-             <div class="text-base font-semibold text-right">
+            <div class="text-base font-semibold text-right">
                  <p>Patient ID: <span id="patient-id-value" class="font-bold text-gray-900">--</span></p>
                 <div class="flex gap-2 justify-end text-sm mt-1">
                     <input type="text" id="patient-name-input" class="logistics-input w-24" placeholder="Name">
@@ -475,7 +472,7 @@
         }
 
 
-        // --- REAL-TIME LOGISTICS LISTENER ---
+        // --- REAL-TIME LOGISTICS LISTENER (MODIFIED FOR SYNC FIX) ---
         function startLogisticsListener() {
             logisticsRef.on('value', async (snapshot) => {
                 const logistics = snapshot.val();
@@ -511,7 +508,7 @@
                     if (logistics.patient_id === registeredPatientId) {
                         currentPatientId = logistics.patient_id;
 
-                        // Read-only assignment fields
+                        // Read-only assignment fields: These should ALWAYS be updated from logistics if a patient is active.
                         elements.docInput.value = logistics.doctor || 'N/A';
                         elements.nurseInput.value = logistics.nurse || 'N/A';
                         elements.paramedicInput.value = logistics.paramedic || 'N/A';
@@ -537,6 +534,7 @@
                         const time = formatTime(logistics.updated_at);
                         elements.updateTime.textContent = `Last synced: ${time}`;
 
+                        // --- CRITICAL FIX: Lock logic is now based purely on 'isAssigned' status ---
                         // Lock demographics and disable save if assignment is confirmed by reception
                         elements.nameInput.disabled = isAssigned;
                         elements.ageInput.disabled = isAssigned;
@@ -544,6 +542,7 @@
 
                         elements.saveBtn.textContent = isAssigned ? 'Assignment Confirmed' : 'Update Demographics';
                         elements.saveBtn.disabled = isAssigned;
+                        // --- END CRITICAL FIX ---
 
                     } else {
                         // --- 2. LOGISTICS PATIENT ID MISMATCH ---
@@ -748,7 +747,12 @@
             try {
                 // 1. WRITE only the status to Firebase if a patient is active. (Python is supposed to use this to start/stop its processing)
                 if (currentPatientId) {
-                    await vitalsRef.update({ status: status });
+                    // Check if the current logistics patient matches the one displayed, otherwise keep 'OFFLINE' to pause python
+                    const logisticsSnapshot = await logisticsRef.once('value');
+                    const logisticsData = logisticsSnapshot.val() || {};
+
+                    const newStatus = (logisticsData.patient_id === currentPatientId) ? 'LIVE' : 'OFFLINE';
+                    await vitalsRef.update({ status: newStatus });
                 } else {
                     await vitalsRef.update({ status: 'OFFLINE' });
                 }
